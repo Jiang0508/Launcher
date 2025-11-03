@@ -4,8 +4,8 @@
 /* === MODULE MANIFEST V2 ===
 module_description: No description provided
 constructor_args:
-  - cmd:'@cmd'
-  - task_stack_depth：2048
+  - cmd: '@cmd'
+  - task_stack_depth: 2048
   - pid_param_trig:
       k: 1.0
       p: 0.0
@@ -22,31 +22,27 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - num_trig_tooth=0.0; //拨弹盘中一圈能存储几颗弹丸
-  - trig_gear_ratio=0.0;// 拨弹电机减速比 3508:19, 2006:36
-  - fric_radius=0.0;          // 摩擦轮半径，单位：米
-  - cover_open_duty=0.0;      //弹舱盖打开时舵机PWM占空比
-  - cover_close_duty=0.0;     // 弹舱盖关闭时舵机PWM占空比
-  - default_bullet_speed=0.0; //默认弹丸初速度
-  - min_launch_delay=0.0;  // 最小发射间隔(1s/最大射频)
-  - launcher_cmd_topic_name:'launcher_cmd'
+  - motor_can1: '@motor_can1'
+  - motor_can2: '@motor_can2'
+  - num_trig_tooth: 0.0
+  - trig_gear_ratio: 0.0
+  - fric_radius: 0.0
+  - cover_open_duty: 0.0
+  - cover_close_duty: 0.0
+  - default_bullet_speed: 0.0
+  - min_launch_delay: 0.0
 template_args:
   - MotorType: RMMotorContainer
 required_hardware:
   - cmd
   - motor_can1
   - motor_can2
-  - bmi088
 depends:
-  - cmd
-  - motor_can1
-  - motor_can2
-  - pid
-  - launcher_cmd_topic_name:'launcher_cmd'
 
 === END MANIFEST === */
 // clang-format on
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -54,14 +50,8 @@ depends:
 #include "Eigen/Core"
 #include "Motor.hpp"
 #include "app_framework.hpp"
-#include "libxr_def.hpp"
-#include "logger.hpp"
 #include "pid.hpp"
-#include "semaphore.hpp"
-#include "thread.hpp"
-#include "timebase.hpp"
-
-#define LAUNCHER_TRIG_SPEED_MAX (16000)
+#define LAUNCHER_TRIG_SPEED_MAX (16000.0f)
 
 template <typename MotorType>
 class Launcher : public LibXR::Application {
@@ -92,10 +82,8 @@ class Launcher : public LibXR::Application {
            Motor<MotorType> &motor_can1, Motor<MotorType> &motor_can2,
            float num_trig_tooth, float trig_gear_ratio, float fric_radius,
            float cover_open_duty, float cover_close_duty,
-           float default_bullet_speed, uint32_t min_launch_delay,
-           const char *launcher_cmd_topic_name)
-      : launcher_cmd_name_(launcher_cmd_topic_name),
-        motor_can2_(motor_can2),
+           float default_bullet_speed, uint32_t min_launch_delaye)
+      : motor_can2_(motor_can2),
         motor_can1_(motor_can1),
         pid_fric_(pid_param_fric),
         pid_trig_(pid_param_trig),
@@ -110,12 +98,9 @@ class Launcher : public LibXR::Application {
   }
 
   static void ThreadFunction(Launcher *launcher) {
-    LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> cmd_suber(
-        launcher->launcher_cmd_name_);
     auto now_ = LibXR::Timebase::GetMicroseconds();
     launcher->dt_ = (now_ - launcher->last_online_time_);
     launcher->last_online_time_ = now_;
-    cmd_suber.StartWaiting();
 
     while (1) {
       launcher->semaphore_.Wait(UINT32_MAX);
@@ -151,7 +136,7 @@ class Launcher : public LibXR::Application {
     const float output_trig_ = std::clamp(
         pid_trig_.Calculate(target_angle_trig_,
                             now_angle_trig_ / LAUNCHER_TRIG_SPEED_MAX, dt_),
-        0, LAUNCHER_TRIG_SPEED_MAX);
+        0.0f, LAUNCHER_TRIG_SPEED_MAX);
 
     float output_fric1_ = bullet_speed_to_fric_rpm(0, fric_radius_, 1);
     float output_fric2_ = -output_fric1_;
@@ -186,9 +171,13 @@ class Launcher : public LibXR::Application {
     }
   }
 
+    /**
+   * @brief 监控函数 (在此应用中未使用)
+   *
+   */
+  void OnMonitor() override {}
+
  private:
-  //! 发射命令Topic名称
-  const char *launcher_cmd_name_;
   // 最小发射间隔
   uint32_t min_launch_delay_ = 0.0f;
   // 默认弹丸初速度
