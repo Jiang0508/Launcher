@@ -92,8 +92,6 @@ jobs:
           xrobot_add_mod Motor --instance-id motor_can1
           xrobot_add_mod Motor --instance-id motor_can2
           xrobot_add_mod CMD --instance-id cmd
-          xrobot_add_mod BMI088 --instance-id bmi088
-          xrobot_add_mod MadgwickAHRS --instance-id ahrs
 
       - name: Add this repo module
         run: |
