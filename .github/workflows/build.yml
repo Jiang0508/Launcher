@@ -53,6 +53,18 @@ jobs:
       - name: Pull libxr to ./libxr
         run: git clone --depth=1 https://github.com/Jiu-xiao/libxr ./libxr
 
+      - name: Checkout CMD module
+        uses: actions/checkout@v4
+        with:
+          repository: QDU-Robomaster/CMD
+          path: Modules/CMD
+
+      - name: Checkout Motor module
+        uses: actions/checkout@v4
+        with:
+          repository: QDU-Robomaster/Motor
+          path: Modules/Motor
+
       - name: Setup Python & Install deps
         run: |
           python3 -m pip install --upgrade pip
@@ -74,9 +86,14 @@ jobs:
         run: |
           xrobot_init_mod
 
-      - name: Add BlinkLED module
+      - name: Add  modules
         run: |
           xrobot_add_mod BlinkLED --instance-id BlinkLED_0
+          xrobot_add_mod Motor --instance-id motor_can1
+          xrobot_add_mod Motor --instance-id motor_can2
+          xrobot_add_mod CMD --instance-id cmd
+          xrobot_add_mod BMI088 --instance-id bmi088
+          xrobot_add_mod MadgwickAHRS --instance-id ahrs
 
       - name: Add this repo module
         run: |
