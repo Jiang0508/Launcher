@@ -25,11 +25,12 @@ constructor_args:
   - motor_can1: '@motor_can2.GetMotor(7)'
   - motor_fric_1_: '@motor_can2.GetMotor(6)'
   - motor_trig: '@motor_can1.GetMotor(6)'
-  - num_trig_tooth: 0.0
-  - trig_gear_ratio: 0.0
-  - fric_radius: 0.0
-  - default_bullet_speed: 0.0
-  - min_launch_delay: 0.0
+  - launcher_param:
+      min_launch_delay: 0.0
+      default_bullet_speed: 0.0
+      fric_radius: 0.0
+      trig_gear_ratio: 0.0
+      num_trig_tooth: 0.0
 template_args:
   - MotorType: RMMotorContainer
 required_hardware:
@@ -68,6 +69,15 @@ class Launcher : public LibXR::Application {
   } RefereeData;
 
  public:
+
+ struct LauncherParam {
+    float min_launch_delay;
+    float default_bullet_speed;
+    float fric_radius;
+    float trig_gear_ratio;
+    uint8_t num_trig_tooth;
+  };
+
   /**
    * @brief Launcher 构造函数
    *
@@ -93,14 +103,8 @@ class Launcher : public LibXR::Application {
            LibXR::PID<float>::Param pid_param_fric,
            typename MotorType::RMMotor *motor_fric_0,
            typename MotorType::RMMotor *motor_fric_1,
-           typename MotorType::RMMotor *motor_trig, float num_trig_tooth,
-           float trig_gear_ratio, float fric_radius, float default_bullet_speed,
-           uint32_t min_launch_delay)
-      : min_launch_delay_(min_launch_delay),
-        default_bullet_speed_(default_bullet_speed),
-        fric_radius_(fric_radius),
-        trig_gear_ratio_(trig_gear_ratio),
-        num_trig_tooth_(num_trig_tooth),
+           typename MotorType::RMMotor *motor_trig, LauncherParam launch_param)
+      : PARAM(launch_param),
         motor_fric_0_(motor_fric_0),
         motor_fric_1_(motor_fric_1),
         motor_trig_(motor_trig),
@@ -154,7 +158,7 @@ class Launcher : public LibXR::Application {
     last_mod_ = now_mod_;
     if (last_mod_ == MOD::SAFE && now_mod_ == MOD::SINGLE) {
       fric_rpm_ = BulletSpeedToFricRpm(default_bullet_speed_, is17mm);
-      target_trig_angle_ = (M_2PI / num_trig_tooth_ + last_trig_angle_);
+      target_trig_angle_ = (M_2PI / PARAM.num_trig_tooth + last_trig_angle_);
       target_trig_rpm_ = 0.0f;
       last_trig_angle_ = target_trig_angle_;
     } else if (last_mod_ == MOD::SAFE && now_mod_ == MOD::BREAK_OUT) {
@@ -202,22 +206,14 @@ class Launcher : public LibXR::Application {
   void OnMonitor() override {}
 
  private:
+ const LauncherParam PARAM;
   RefereeData referee_data_;
   MOD mod_ = MOD::SAFE;
   STATE state_ = STATE::STOP;
 
   uint8_t now_mod_ = 0;
   uint8_t last_mod_ = 0;
-  // 最小发射间隔
-  uint32_t min_launch_delay_ = 0.0f;
-  // 默认弹丸初速度
-  float default_bullet_speed_ = 0.0f;
-  // 摩擦轮半径
-  float fric_radius_ = 0.0f;
-  // 拨弹电机减速比
-  float trig_gear_ratio_ = 0.0f;
-  // 拨弹盘中一圈能存储几颗弹丸
-  float num_trig_tooth_ = 0.0f;
+
 
   float calorie_remain_ = 0.0f;
 
