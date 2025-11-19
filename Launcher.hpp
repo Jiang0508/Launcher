@@ -22,8 +22,8 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - motor_can1: '@motor_fric_0'
-  - motor_fric_1_: '@motor_fric_1'
+  - motor_fric_0: '@motor_fric_0'
+  - motor_fric_1: '@motor_fric_1'
   - motor_trig: '@motor_trig'
   - launcher_param:
       min_launch_delay: 0.0
@@ -33,9 +33,8 @@ constructor_args:
       num_trig_tooth: 0
 template_args:
 required_hardware:
-  - cmd
-  - motor_can1
-  - motor_can2
+  - dr16
+  - can
 depends:
   - qdu-future/CMD
   - qdu-future/RMMotor
@@ -69,8 +68,7 @@ class Launcher : public LibXR::Application {
   } RefereeData;
 
  public:
-
- struct LauncherParam {
+  struct LauncherParam {
     float min_launch_delay;
     float default_bullet_speed;
     float fric_radius;
@@ -100,10 +98,9 @@ class Launcher : public LibXR::Application {
   Launcher(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app,
            CMD &cmd, uint32_t task_stack_depth,
            LibXR::PID<float>::Param pid_param_trig,
-           LibXR::PID<float>::Param pid_param_fric,
-           typename MotorType::RMMotor *motor_fric_0,
-           typename MotorType::RMMotor *motor_fric_1,
-           typename MotorType::RMMotor *motor_trig, LauncherParam launch_param)
+           LibXR::PID<float>::Param pid_param_fric, RMMotor *motor_fric_0,
+           RMMotor *motor_fric_1, RMMotor *motor_trig,
+           LauncherParam launch_param)
       : PARAM(launch_param),
         motor_fric_0_(motor_fric_0),
         motor_fric_1_(motor_fric_1),
@@ -208,14 +205,13 @@ class Launcher : public LibXR::Application {
   void OnMonitor() override {}
 
  private:
- const LauncherParam PARAM;
+  const LauncherParam PARAM;
   RefereeData referee_data_;
   MOD mod_ = MOD::SAFE;
   STATE state_ = STATE::STOP;
 
   uint8_t now_mod_ = 0;
   uint8_t last_mod_ = 0;
-
 
   float calorie_remain_ = 0.0f;
 
