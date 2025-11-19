@@ -22,9 +22,9 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - motor_can1: '@motor_can2.GetMotor(7)'
-  - motor_fric_1_: '@motor_can2.GetMotor(6)'
-  - motor_trig: '@motor_can1.GetMotor(6)'
+  - motor_can1: '@motor_fric_0'
+  - motor_fric_1_: '@motor_fric_1'
+  - motor_trig: '@motor_trig'
   - launcher_param:
       min_launch_delay: 0.0
       default_bullet_speed: 0.0
@@ -32,7 +32,6 @@ constructor_args:
       trig_gear_ratio: 0.0
       num_trig_tooth: 0
 template_args:
-  - MotorType: RMMotorContainer
 required_hardware:
   - cmd
   - motor_can1

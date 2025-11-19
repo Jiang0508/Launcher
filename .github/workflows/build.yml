@@ -59,11 +59,11 @@ jobs:
           repository: QDU-Robomaster/CMD
           path: Modules/CMD
 
-      - name: Checkout Motor module
+      - name: Checkout RMMotor module
         uses: actions/checkout@v4
         with:
-          repository: QDU-Robomaster/Motor
-          path: Modules/Motor
+          repository: QDU-Robomaster/RMMotor
+          path: Modules/RMMotor
 
       - name: Setup Python & Install deps
         run: |
@@ -89,8 +89,9 @@ jobs:
       - name: Add  modules
         run: |
           xrobot_add_mod BlinkLED --instance-id BlinkLED_0
-          xrobot_add_mod Motor --instance-id motor_can1
-          xrobot_add_mod Motor --instance-id motor_can2
+          xrobot_add_mod RMMotor --instance-id motor_firc_0
+          xrobot_add_mod RMMotor --instance-id motor_firc_1
+          xrobot_add_mod RMMotor --instance-id motor_trig
           xrobot_add_mod CMD --instance-id cmd
 
       - name: Add this repo module
