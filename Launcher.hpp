@@ -21,9 +21,9 @@ constructor_args:
       i_limit: 0.0
       out_limit: 0.0
       cycle: false
-  - motor_fric_0: '@motor_fric_0'
-  - motor_fric_1: '@motor_fric_1'
-  - motor_trig: '@motor_trig'
+  - motor_fric_0: '@&motor_fric_0'
+  - motor_fric_1: '@&motor_fric_1'
+  - motor_trig: '@&motor_trig'
   - launcher_param:
       min_launch_delay: 0.0
       default_bullet_speed: 0.0
