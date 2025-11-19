@@ -79,7 +79,6 @@ class Launcher : public LibXR::Application {
    *
    * @param hw 硬件容器
    * @param app 应用管理器
-   * @param cmd 命令模块实例
    * @param task_stack_depth 任务堆栈深度
    * @param pid_param_trig 拨弹盘PID参数
    * @param pid_param_fric 摩擦轮PID参数
