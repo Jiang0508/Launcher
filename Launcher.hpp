@@ -48,9 +48,6 @@ depends:
 === END MANIFEST === */
 // clang-format on
 
-#include <sys/_types.h>
-#include <sys/types.h>
-
 #include <cmath>
 #include <cstdint>
 
