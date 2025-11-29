@@ -188,13 +188,25 @@ class Launcher : public LibXR::Application {
   }
 
   void TrigModeSelection() {
-    if (launcher_cmd_.isfire) {
-      is_fire_time_ = LibXR::Timebase::GetMilliseconds();
-      trig_mod_ = (is_fire_time_ - last_fire_time_ < 5000) ? TRIGMODE::CONTINUE
-                                                         : TRIGMODE::SINGLE;
+    auto now = LibXR::Timebase::GetMilliseconds();
+
+    if (launcher_cmd_.isfire && !last_fire_notify_) {
+      fire_press_time_ = now;
+      press_continue_ = false;
+      trig_mod_ = TRIGMODE::SINGLE;
+    } else if (launcher_cmd_.isfire && last_fire_notify_) {
+      if (!press_continue_ && (now - fire_press_time_ > 200)) {
+        press_continue_ = true;
+      }
+      if (press_continue_) {
+        trig_mod_ = TRIGMODE::CONTINUE;
+      }
     } else {
       trig_mod_ = TRIGMODE::SAFE;
+      press_continue_ = false;
     }
+
+    last_fire_notify_ = launcher_cmd_.isfire;
   }
 
   void CaclTarget() {
@@ -217,22 +229,18 @@ class Launcher : public LibXR::Application {
       case TRIGMODE::SAFE: {
         target_trig_angle_ = 0.0f;
         target_trig_rpm_ = 0.0f;
-        // TrigAngleControl(0.0f);
+        TrigAngleControl(0.0f);
       } break;
       case TRIGMODE::SINGLE:
         target_trig_angle_ = static_cast<float>(
             (M_2PI / PARAM.num_trig_tooth + last_trig_angle_));
-        // TrigAngleControl(target_trig_angle_);
-        last_trig_angle_ = target_trig_angle_;
+        TrigAngleControl(target_trig_angle_);
         trig_mod_ = TRIGMODE::SAFE;
-        last_fire_time_ = LibXR::Timebase::GetMilliseconds();
         break;
       case TRIGMODE::CONTINUE:
         target_trig_angle_ = static_cast<float>(
             (M_2PI / PARAM.num_trig_tooth + last_trig_angle_));
-        // TrigAngleControl(target_trig_angle_);
-        last_trig_angle_ = target_trig_angle_;
-        last_fire_time_ = LibXR::Timebase::GetMilliseconds();
+        TrigAngleControl(target_trig_angle_);
         break;
       default:
         break;
@@ -271,8 +279,9 @@ class Launcher : public LibXR::Application {
   float dt_ = 0;
   LibXR::MillisecondTimestamp last_online_time_ = 0;
 
-  LibXR::MillisecondTimestamp last_fire_time_ = 0;
-  LibXR::MillisecondTimestamp is_fire_time_ = 0;
+  bool last_fire_notify_ = false;
+  bool press_continue_ = false;
+  LibXR::MillisecondTimestamp fire_press_time_ = 0;
 
   LibXR::Thread thread_;
   LibXR::Semaphore semaphore_;
@@ -297,6 +306,5 @@ class Launcher : public LibXR::Application {
     float out = pid_trig_sp_.Calculate(sp_out, motor_trig_->GetRPM(), dt_);
     motor_trig_->CurrentControl(out);
   }
-
   void SetMode(uint32_t mode) { fric_mod_ = static_cast<FRICMODE>(mode); }
 };
