@@ -120,20 +120,28 @@ class Launcher : public LibXR::Application {
            uint32_t task_stack_depth,
            LibXR::PID<float>::Param pid_param_trig_angle,
            LibXR::PID<float>::Param pid_param_trig_speed,
-           LibXR::PID<float>::Param pid_param_fric, RMMotor *motor_fric_0,
+           LibXR::PID<float>::Param pid_param_fric_0,
+           LibXR::PID<float>::Param pid_param_fric_1,RMMotor *motor_fric_0,
            RMMotor *motor_fric_1, RMMotor *motor_trig,
            LauncherParam launch_param)
       : PARAM(launch_param),
         motor_fric_0_(motor_fric_0),
         motor_fric_1_(motor_fric_1),
         motor_trig_(motor_trig),
-        pid_fric_(pid_param_fric),
+        pid_fric_0_(pid_param_fric_0),
+        pid_fric_1_(pid_param_fric_1),
         pid_trig_sp_(pid_param_trig_speed),
         pid_trig_angle_(pid_param_trig_angle) {
     UNUSED(hw);
     UNUSED(app);
     thread_.Create(this, ThreadFunction, "LauncherThread", task_stack_depth,
                    LibXR::Thread::Priority::MEDIUM);
+
+    if (PARAM.trig_freq_ > 0.0f) {
+      min_launch_delay_ = 1.0f / PARAM.trig_freq_;
+    } else {
+      min_launch_delay_ = 0.0f;
+    }
 
     auto callback = LibXR::Callback<uint32_t>::Create(
         [](bool in_isr, Launcher *launcher, uint32_t event_id) {
@@ -171,35 +179,49 @@ class Launcher : public LibXR::Application {
     referee_data_.heat_limit = 260.0f;
     referee_data_.heat_cooling = 20.0f;
 
+    static float last_motor_angle = 0.0f;
+    static bool initialized = false;
+
     motor_fric_0_->Update();
     motor_fric_1_->Update();
     motor_trig_->Update();
 
-    const float LAST_TRIG_MOTOR_ANGLE =
-        LibXR::CycleValue<float>(this->motor_trig_->GetAngle());
+    float current_motor_angle = motor_trig_->GetAngle();
 
-    motor_trig_->Update();
-    /*注意极性*/
-    const float DELTA_MOTOR_ANGLE =
-        LibXR::CycleValue<float>(this->motor_trig_->GetAngle()) -
-        LAST_TRIG_MOTOR_ANGLE;
+    if (!initialized) {
+      last_motor_angle = current_motor_angle;
+      initialized = true;
+      return;
+    }
 
-    last_trig_angle_ += DELTA_MOTOR_ANGLE / PARAM.trig_gear_ratio;
+    float last_angle = last_motor_angle;
+    float current_angle = current_motor_angle;
+
+    float delta_trig_angle = LibXR::CycleValue<float>(current_angle) -
+                             LibXR::CycleValue<float>(last_angle);
+    if (!motor_trig_->GetReverse()) {
+      trig_angle_ += delta_trig_angle / PARAM.trig_gear_ratio;
+    } else {
+      trig_angle_ -= delta_trig_angle / PARAM.trig_gear_ratio;
+    }
+    last_motor_angle = current_motor_angle;
   }
 
   void TrigModeSelection() {
     auto now = LibXR::Timebase::GetMilliseconds();
 
-    if (launcher_cmd_.isfire && !last_fire_notify_) {
-      fire_press_time_ = now;
-      press_continue_ = false;
-      trig_mod_ = TRIGMODE::SINGLE;
-    } else if (launcher_cmd_.isfire && last_fire_notify_) {
-      if (!press_continue_ && (now - fire_press_time_ > 200)) {
-        press_continue_ = true;
-      }
-      if (press_continue_) {
-        trig_mod_ = TRIGMODE::CONTINUE;
+    if (launcher_cmd_.isfire) {
+      if (!last_fire_notify_) {
+        fire_press_time_ = now;
+        press_continue_ = false;
+        trig_mod_ = TRIGMODE::SINGLE;
+      } else {
+        if (!press_continue_ && (now - fire_press_time_ > 500)) {
+          press_continue_ = true;
+        }
+        if (press_continue_) {
+          trig_mod_ = TRIGMODE::CONTINUE;
+        }
       }
     } else {
       trig_mod_ = TRIGMODE::SAFE;
@@ -217,34 +239,55 @@ class Launcher : public LibXR::Application {
     switch (fric_mod_) {
       case FRICMODE::SAFE:
         fric_rpm_ = 0.0f;
+        FricRPMControl(fric_rpm_);
         break;
       case FRICMODE::READY:
-        fric_rpm_ = 4700.0f;
+        fric_rpm_ = 3000.0f;
         FricRPMControl(fric_rpm_);
-      default:
-        break;
-    };
-
-    switch (trig_mod_) {
-      case TRIGMODE::SAFE: {
-        target_trig_angle_ = 0.0f;
-        target_trig_rpm_ = 0.0f;
-        TrigAngleControl(0.0f);
-      } break;
-      case TRIGMODE::SINGLE:
-        target_trig_angle_ = static_cast<float>(
-            (M_2PI / PARAM.num_trig_tooth + last_trig_angle_));
-        TrigAngleControl(target_trig_angle_);
-        trig_mod_ = TRIGMODE::SAFE;
-        break;
-      case TRIGMODE::CONTINUE:
-        target_trig_angle_ = static_cast<float>(
-            (M_2PI / PARAM.num_trig_tooth + last_trig_angle_));
-        TrigAngleControl(target_trig_angle_);
         break;
       default:
         break;
     }
+
+    static TRIGMODE last_trig_mod = TRIGMODE::SAFE;
+
+    if (last_trig_mod == TRIGMODE::SAFE && trig_mod_ == TRIGMODE::SINGLE) {
+        target_trig_angle_ = static_cast<float>(
+            M_2PI / PARAM.num_trig_tooth + trig_angle_);
+    }
+
+    switch (trig_mod_) {
+      case TRIGMODE::SAFE: {
+        TrigAngleControl(trig_angle_);
+      } break;
+
+      case TRIGMODE::SINGLE: {
+        TrigAngleControl(target_trig_angle_);
+
+          float angle_err = static_cast<float>(target_trig_angle_ - trig_angle_);
+        if (std::fabs(angle_err) == 0.0f) {
+          trig_mod_ = TRIGMODE::SAFE;
+        }
+      } break;
+
+      case TRIGMODE::CONTINUE: {
+        float since_last = (now - last_trig_time_).ToSecondf();
+        if (PARAM.trig_freq_ > 0.0f) {
+          float trig_speed = 1.0f / PARAM.trig_freq_;
+          if (since_last >= trig_speed) {
+              target_trig_angle_ += static_cast<float>(
+                  M_2PI / PARAM.num_trig_tooth);
+            last_trig_time_ = now;
+          }
+        }
+        TrigAngleControl(target_trig_angle_);
+      } break;
+
+      default:
+        break;
+    }
+
+    last_trig_mod = trig_mod_;
   }
 
   /**
@@ -261,16 +304,18 @@ class Launcher : public LibXR::Application {
   TRIGMODE trig_mod_ = TRIGMODE::SAFE;
   FRICMODE fric_mod_ = FRICMODE::SAFE;
 
-  LibXR::CycleValue<float> target_trig_angle_ = 0.0f;
-  float target_trig_rpm_ = 0.0f;
-  LibXR::CycleValue<float> last_trig_angle_ = 0.0f;
+  float target_trig_angle_ = 0.0f;
+  float trig_angle_ = 0.0f;
   float fric_rpm_ = 0.0f;
+  float min_launch_delay_ = 0.0f;
+  LibXR::MillisecondTimestamp last_trig_time_ = 0;
 
   RMMotor *motor_fric_0_;
   RMMotor *motor_fric_1_;
   RMMotor *motor_trig_;
 
-  LibXR::PID<float> pid_fric_;
+  LibXR::PID<float> pid_fric_0_;
+  LibXR::PID<float> pid_fric_1_;
   LibXR::PID<float> pid_trig_sp_;
   LibXR::PID<float> pid_trig_angle_;
 
@@ -290,20 +335,22 @@ class Launcher : public LibXR::Application {
 
   /*---------------------工具函数--------------------------------------------------*/
   void FricRPMControl(float output) {
-    float out_left = pid_fric_.Calculate(output, motor_fric_0_->GetRPM(), dt_);
+    float out_left = pid_fric_0_.Calculate(output, motor_fric_0_->GetRPM(), dt_);
     float out_right =
-        -pid_fric_.Calculate(output, motor_fric_1_->GetRPM(), dt_);
+        pid_fric_1_.Calculate(output, motor_fric_1_->GetRPM(), dt_);
     motor_fric_0_->CurrentControl(out_left);
     motor_fric_1_->CurrentControl(out_right);
   }
 
-  void TrigAngleControl(float output) {
-    float sp_out = pid_trig_angle_.Calculate(output, last_trig_angle_,
-                                             motor_trig_->GetRPM() /
-                                                 PARAM.trig_gear_ratio / 60.0f /
-                                                 static_cast<float>(M_2PI),
-                                             dt_);
-    float out = pid_trig_sp_.Calculate(sp_out, motor_trig_->GetRPM(), dt_);
+  void TrigAngleControl(float target_angle) {
+    float plate_omega_ref = pid_trig_angle_.Calculate(
+        target_angle, trig_angle_,
+        motor_trig_->GetOmega() / PARAM.trig_gear_ratio,dt_);
+
+    float motor_omega_ref = plate_omega_ref;
+    float out =
+      pid_trig_sp_.Calculate(motor_omega_ref, motor_trig_->GetOmega()/PARAM.trig_gear_ratio, dt_);
+
     motor_trig_->CurrentControl(out);
   }
   void SetMode(uint32_t mode) { fric_mod_ = static_cast<FRICMODE>(mode); }
