@@ -69,7 +69,7 @@ constructor_args:
       cycle: false
 template_args:
   - LauncherType: HeroLauncher
-#  - FRIC_NUM: 4
+  - FRIC_NUM: 4
   - TRIG_NUM: 1
 required_hardware:
   - dr16

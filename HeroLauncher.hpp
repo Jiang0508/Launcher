@@ -8,17 +8,18 @@ constructor_args:
   - motor_fric_front_right: '@&motor_fric_front_right'
   - motor_fric_back_left: '@&motor_fric_back_left'
   - motor_fric_back_right: '@&motor_fric_back_right'
-  - motor_trig_0: '@&motor_trig'
+  - motor_trig: '@&motor_trig'
+  - cmd: '@&cmd'
   - task_stack_depth: 2048
-  - trig_speed_pid:
-      k: 1.0
-      p: 0.0012
-      i: 0.001
-      d: 0.0
-      i_limit: 1.0
-      out_limit: 1.0
-      cycle: false
-  - trig_angle_pid:
+  - launcher_param:
+      fric1_setpoint_speed: 500.0
+      fric2_setpoint_speed: 500.0
+      default_bullet_speed: 0.0
+      fric_radius: 6.0
+      trig_gear_ratio: 19.0
+      num_trig_tooth: 6
+      trig_freq_: 0.0
+  - pid_trig_angle:
       k: 1.0
       p: 4000.0
       i: 3000.0
@@ -26,7 +27,15 @@ constructor_args:
       i_limit: 0.0
       out_limit: 2000.0
       cycle: false
-  - fric_speed_pid_0:
+  - pid_trig_speed:
+      k: 1.0
+      p: 0.0012
+      i: 0.001
+      d: 0.0
+      i_limit: 1.0
+      out_limit: 1.0
+      cycle: false
+  - pid_fric_speed_0:
       k: 1.0
       p: 0.002
       i: 0.0
@@ -34,7 +43,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 1.0
       cycle: false
-  - fric_speed_pid_1:
+  - pid_fric_speed_1:
       k: 1.0
       p: 0.002
       i: 0.0
@@ -42,7 +51,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 1.0
       cycle: false
-  - fric_speed_pid_2:
+  - pid_fric_speed_2:
       k: 1.0
       p: 0.002
       i: 0.0
@@ -50,7 +59,7 @@ constructor_args:
       i_limit: 0.0
       out_limit: 1.0
       cycle: false
-  - fric_speed_pid_3:
+  - pid_fric_speed_3:
       k: 1.0
       p: 0.002
       i: 0.0
@@ -58,20 +67,16 @@ constructor_args:
       i_limit: 0.0
       out_limit: 1.0
       cycle: false
-  - launcher_param:
-      fric1_setpoint_speed: 3900.0
-      fric2_setpoint_speed: 4300.0
-      trig_gear_ratio: 19.0
-      num_trig_tooth: 6.0
-  - cmd: '@&cmd'
 template_args:
-  - MotorType: RMMotor
+  - LauncherType: HeroLauncher
+  - FRIC_NUM: 4
+  - TRIG_NUM: 1
 required_hardware:
   - dr16
   - can
 depends:
-  - qdu-feature/CMD
-  - qdu-feature/RMMotor
+  - qdu-future/CMD
+  - qdu-future/RMMotor
 === END MANIFEST === */
 // clang-format on
 
@@ -111,6 +116,7 @@ enum class FRICMODE : uint8_t {
 typedef struct {
   float heat_limit;
   float heat_cooling;
+  float cooling_rate;
   uint8_t level;
 } RefereeData;
 
@@ -291,13 +297,13 @@ class HeroLauncher {
         trig_setpoint_angle_ -= M_2PI / 1002.0f;
         last_change_angle_time_ = LibXR::Timebase::GetMilliseconds();
 
-        cnt_++;
+        delay_time_++;
       }
 
-      if (cnt_ > 50) {//延迟50个控制周期
+      if (delay_time_ > 50) {//延迟50个控制周期
         if (std::abs(motor_fric_back_left_->GetCurrent()) > 5) {  // 发弹检测
           trig_zero_angle_ = trig_angle_;  // 获取电机当前位置
-          trig_setpoint_angle_ = trig_angle_ - M_2PI / 7.55f;  // 偏移量
+          trig_setpoint_angle_ = trig_angle_ - M_2PI / 7.35f;  // 偏移量
 
           fire_flag_ = false;
           first_loading_ = false;
@@ -327,10 +333,10 @@ class HeroLauncher {
       if (start_fire_time_ > 0 && (now_ - start_fire_time_ > 100) &&
           !mark_launch_) {
         fire_flag_ = false;
-        first_loading_ = false;
+        //first_loading_ = false;
         enable_fire_ = false;
-        start_loading_time_ = 0;
-        cnt_ = 0;
+        //start_loading_time_ = 0;
+        //delay_time_ = 0;
         start_fire_time_ = now_;
       }
 
@@ -370,14 +376,14 @@ class HeroLauncher {
     trig_output_ = trig_speed_pid_.Calculate(trig_setpoint_speed_,
                                              motor_trig_[0]->GetRPM(), dt_);
 
-    motor_trig_[0]->CurrentControl(0.1 * trig_output_);
+    motor_trig_[0]->CurrentControl(trig_output_);
   }
   void HeatLimit() {
-    referee_data_.level = 10;  // for debug
-    heat_ctrl_.heat_limit = 140.0f + (referee_data_.level - 1) * 10.0;
+    heat_ctrl_.heat_limit = referee_data_.heat_limit;
+    heat_ctrl_.heat_limit = 1000;// for debug
     heat_ctrl_.heat_increase = 100.0f;
-    heat_ctrl_.cooling_rate = 12.0f + (referee_data_.level - 1) * 2.0;
-    // heat_ctrl_.cooling_rate = 1000;
+    heat_ctrl_.cooling_rate = referee_data_.cooling_rate;
+    heat_ctrl_.cooling_rate = 1000;  // for debug
     heat_ctrl_.heat -=
         heat_ctrl_.cooling_rate / 500.0;  // 每个控制周期的冷却恢复
     if (fired_ >= 1) {
@@ -404,7 +410,7 @@ class HeroLauncher {
 
     // 重置计数器
     fired_ = 0;
-    cnt_ = 0;
+    delay_time_ = 0;
 
     // 重置时间戳
     fire_press_time_ = 0;
@@ -500,7 +506,7 @@ class HeroLauncher {
   bool press_continue_ = false;
   LibXR::MillisecondTimestamp fire_press_time_ = 0;
 
-  uint8_t cnt_ = 0;
+  uint8_t delay_time_ = 0;
 
   CMD *cmd_;
   LibXR::Thread thread_;
