@@ -26,6 +26,7 @@ depends: []
 #include "app_framework.hpp"
 #include "cycle_value.hpp"
 #include "event.hpp"
+#include "libxr_cb.hpp"
 #include "libxr_def.hpp"
 #include "libxr_rw.hpp"
 #include "libxr_time.hpp"
@@ -153,6 +154,14 @@ class InfantryLauncher {
           launcher->LostCtrl();
         },
         this);
+
+    auto callback = LibXR::Callback<uint32_t>::Create([](bool in_isr, InfantryLauncher *launcher, uint32_t event_id) {
+      UNUSED(in_isr);
+      launcher->SetMode(static_cast<LauncherEvent>(event_id));
+    }, this);
+    cmd_->GetEvent().Register(static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX), callback);
+    cmd_->GetEvent().Register(static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_SAFE), callback);
+    cmd_->GetEvent().Register(static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_READY), callback);
     cmd_->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
 
     hw.template FindOrExit<LibXR::RamFS>({"ramfs"})->Add(cmd_file_);
@@ -181,9 +190,7 @@ class InfantryLauncher {
 
       launcher->mutex_.Lock();
       launcher->Update();
-      launcher->UpdateHeatControl();
-      launcher->RunStateMachine();
-      launcher->UpdateShotLatency();
+      launcher->Solve();
       launcher->Control();
       launcher->PublishTopics();
       launcher->mutex_.Unlock();
@@ -193,13 +200,103 @@ class InfantryLauncher {
   }
 
   /**
+   * @brief 数据处理主入口
+   * @details 更新周期时间、电机反馈、拨弹角度，并刷新发射器总状态。
+   */
+  void Update() {
+    auto now = LibXR::Timebase::GetMilliseconds();
+    dt_ = (now - last_online_time_).ToSecondf();
+    last_online_time_ = now;
+
+    referee_data_.heat_limit = 260.0f;
+    referee_data_.heat_cooling = 20.0f;
+    heat_limit_.single_heat = 10.0f;
+    heat_limit_.heat_threshold = 2.0f;
+
+    motor_fric_0_->Update();
+    motor_fric_1_->Update();
+    motor_trig_->Update();
+
+    param_fric_0_ = motor_fric_0_->GetFeedback();
+    param_fric_1_ = motor_fric_1_->GetFeedback();
+    param_trig_ = motor_trig_->GetFeedback();
+
+    float current_motor_angle = param_trig_.position;
+    float delta_trig_angle = LibXR::CycleValue<float>(current_motor_angle) -
+                             LibXR::CycleValue<float>(last_motor_angle_);
+    trig_angle_ += delta_trig_angle / param_.trig_gear_ratio;
+    last_motor_angle_ = current_motor_angle;
+
+    UpdateLauncherState();
+  }
+
+  /**
+   * @brief 状态机主入口
+    * @details 根据当前状态、命令输入和热量限制计算目标拨弹角度和摩擦轮转速，并处理卡弹逻辑。
+    */
+  void Solve(){
+    UpdateHeatControl();
+    RunStateMachine();
+    UpdateShotLatency();
+  }
+
+  /**
+   * @brief 控制输出
+   * @details 计算拨盘与摩擦轮控制量并下发到电机，包含电机状态检查和错误恢复。
+   */
+  void Control() {
+    SetFricTargetByEvent();
+
+    if (launcher_event_ == LauncherEvent::SET_FRICMODE_RELAX) {
+      motor_trig_->Relax();
+      motor_fric_0_->Relax();
+      motor_fric_1_->Relax();
+      return;
+    }
+
+    float out_trig = 0.0f;
+    float out_fric_0 = 0.0f;
+    float out_fric_1 = 0.0f;
+
+    if (trig_mode_ != TRIGMODE::RELAX) {
+      TrigControl(out_trig, target_trig_angle_, dt_);
+    }
+    FricControl(out_fric_0, out_fric_1, target_rpm_, dt_);
+
+    auto cmd_trig = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
+                                    .reduction_ratio = 36.0f,
+                                    .velocity = out_trig};
+    auto cmd_fric_0 = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
+                                      .reduction_ratio = 19.0f,
+                                      .velocity = out_fric_0};
+    auto cmd_fric_1 = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
+                                      .reduction_ratio = 19.0f,
+                                      .velocity = out_fric_1};
+
+    auto motor_control = [&](Motor *motor, const Motor::Feedback &fb,
+                             const Motor::MotorCmd &cmd) {
+      if (fb.state == 0) {
+        motor->Enable();
+      } else if (fb.state != 0 && fb.state != 1) {
+        motor->ClearError();
+      } else {
+        motor->Control(cmd);
+      }
+    };
+
+    motor_control(motor_trig_, param_trig_, cmd_trig);
+    motor_control(motor_fric_0_, param_fric_0_, cmd_fric_0);
+    motor_control(motor_fric_1_, param_fric_1_, cmd_fric_1);
+  }
+
+  /**
    * @brief 设置摩擦轮模式事件
    * @param mode 事件ID，对应 LauncherEvent
    * @details 切换模式后同步复位相关PID，避免模式切换瞬态冲击。
    */
-  void SetMode(uint32_t mode) {
+  void SetMode(LauncherEvent mode) {
     mutex_.Lock();
-    launcher_event_ = static_cast<LauncherEvent>(mode);
+    launcher_event_ = mode;
     pid_fric_0_.Reset();
     pid_fric_1_.Reset();
     pid_trig_angle_.Reset();
@@ -549,40 +646,13 @@ class InfantryLauncher {
     return self->DebugCommand(argc, argv);
   }
 
- public:
-  /**
-   * @brief 数据处理主入口
-   * @details 更新周期时间、电机反馈、拨弹角度，并刷新发射器总状态。
-   */
-  void Update() {
-    last_online_time_ = LibXR::Timebase::GetMicroseconds();
-
-    referee_data_.heat_limit = 260.0f;
-    referee_data_.heat_cooling = 20.0f;
-    heat_limit_.single_heat = 10.0f;
-    heat_limit_.heat_threshold = 2.0f;
-
-    motor_fric_0_->Update();
-    motor_fric_1_->Update();
-    motor_trig_->Update();
-
-    param_fric_0_ = motor_fric_0_->GetFeedback();
-    param_fric_1_ = motor_fric_1_->GetFeedback();
-    param_trig_ = motor_trig_->GetFeedback();
-
-    float current_motor_angle = param_trig_.position;
-    float delta_trig_angle =
-        LibXR::CycleValue<float>(current_motor_angle) -
-        LibXR::CycleValue<float>(last_motor_angle_);
-    trig_angle_ += delta_trig_angle / param_.trig_gear_ratio;
-    last_motor_angle_ = current_motor_angle;
-
-    UpdateLauncherState();
-  }
+ private:
+  /*-----------------工具函数---------------------------------------------------*/
 
   /**
    * @brief 更新发射器总状态
-   * @details 基于卡弹判据、摩擦轮模式与热量许可，计算 RELAX/STOP/NORMAL/JAMMED。
+   * @details 基于卡弹判据、摩擦轮模式与热量许可，计算
+   * RELAX/STOP/NORMAL/JAMMED。
    */
   void UpdateLauncherState() {
     if (fabsf(param_trig_.torque) > launcher::param::JAM_TORQUE) {
@@ -769,55 +839,6 @@ class InfantryLauncher {
   }
 
   /**
-   * @brief 控制输出
-   * @details 计算拨盘与摩擦轮控制量并下发到电机，包含电机状态检查和错误恢复。
-   */
-  void Control() {
-    SetFricTargetByEvent();
-
-    if (launcher_event_ == LauncherEvent::SET_FRICMODE_RELAX) {
-      motor_trig_->Relax();
-      motor_fric_0_->Relax();
-      motor_fric_1_->Relax();
-      return;
-    }
-
-    float out_trig = 0.0f;
-    float out_fric_0 = 0.0f;
-    float out_fric_1 = 0.0f;
-
-    if (trig_mode_ != TRIGMODE::RELAX) {
-      TrigControl(out_trig, target_trig_angle_, dt_);
-    }
-    FricControl(out_fric_0, out_fric_1, target_rpm_, dt_);
-
-    auto cmd_trig = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
-                                    .reduction_ratio = 36.0f,
-                                    .velocity = out_trig};
-    auto cmd_fric_0 = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
-                                      .reduction_ratio = 19.0f,
-                                      .velocity = out_fric_0};
-    auto cmd_fric_1 = Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
-                                      .reduction_ratio = 19.0f,
-                                      .velocity = out_fric_1};
-
-    auto motor_control = [&](Motor *motor, const Motor::Feedback &fb,
-                             const Motor::MotorCmd &cmd) {
-      if (fb.state == 0) {
-        motor->Enable();
-      } else if (fb.state != 0 && fb.state != 1) {
-        motor->ClearError();
-      } else {
-        motor->Control(cmd);
-      }
-    };
-
-    motor_control(motor_trig_, param_trig_, cmd_trig);
-    motor_control(motor_fric_0_, param_fric_0_, cmd_fric_0);
-    motor_control(motor_fric_1_, param_fric_1_, cmd_fric_1);
-  }
-
-  /**
    * @brief 热量管理与弹频调度
    * @details 周期更新当前热量，计算是否允许发射，并依据剩余热量调整目标弹频。
    */
@@ -896,22 +917,6 @@ class InfantryLauncher {
   }
 
   /**
-   * @brief 监控回调
-   */
-  void OnMonitor() {}
-
-  /**
-   * @brief 调试命令入口
-   */
-#ifdef DEBUG
-  int DebugCommand(int argc, char** argv);
-#endif
-
-  /* 外壳可直接写入的命令数据 */
-  CMD::LauncherCMD launcher_cmd_{};  // NOLINT
-
- private:
-  /**
    * @brief 拨盘控制解算
    * @param out_trig 拨盘控制输出
    * @param target_trig_angle 拨盘目标角度
@@ -963,6 +968,7 @@ class InfantryLauncher {
       .allow_fire = true,
   };
 
+  private:
   RMMotor *motor_fric_0_;
   RMMotor *motor_fric_1_;
   RMMotor *motor_trig_;
