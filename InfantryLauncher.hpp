@@ -154,14 +154,6 @@ class InfantryLauncher {
           launcher->LostCtrl();
         },
         this);
-
-    auto callback = LibXR::Callback<uint32_t>::Create([](bool in_isr, InfantryLauncher *launcher, uint32_t event_id) {
-      UNUSED(in_isr);
-      launcher->SetMode(static_cast<LauncherEvent>(event_id));
-    }, this);
-    cmd_->GetEvent().Register(static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX), callback);
-    cmd_->GetEvent().Register(static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_SAFE), callback);
-    cmd_->GetEvent().Register(static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_READY), callback);
     cmd_->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
 
     hw.template FindOrExit<LibXR::RamFS>({"ramfs"})->Add(cmd_file_);
@@ -294,9 +286,9 @@ class InfantryLauncher {
    * @param mode 事件ID，对应 LauncherEvent
    * @details 切换模式后同步复位相关PID，避免模式切换瞬态冲击。
    */
-  void SetMode(LauncherEvent mode) {
+  void SetMode(uint32_t mode) {
     mutex_.Lock();
-    launcher_event_ = mode;
+    launcher_event_ = static_cast<LauncherEvent>(mode);
     pid_fric_0_.Reset();
     pid_fric_1_.Reset();
     pid_trig_angle_.Reset();
