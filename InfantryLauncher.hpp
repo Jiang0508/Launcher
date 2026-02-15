@@ -298,9 +298,9 @@ class InfantryLauncher {
       }
     };
 
-    motor_control(motor_trig_, param_trig_, cmd_trig);
-    motor_control(motor_fric_0_, param_fric_0_, cmd_fric_0);
-    motor_control(motor_fric_1_, param_fric_1_, cmd_fric_1);
+    motor_control(motor_trig_, trig_fb, cmd_trig);
+    motor_control(motor_fric_0_, fric_0_fb, cmd_fric_0);
+    motor_control(motor_fric_1_, fric_1_fb, cmd_fric_1);
   }
 
   /**
@@ -386,6 +386,20 @@ class InfantryLauncher {
   LibXR::Topic shoot_waiting_ = LibXR::Topic::CreateTopic<float>("shoot_dt");
   LibXR::Topic shoot_number_ = LibXR::Topic::CreateTopic<float>("shoot_number");
   LibXR::Topic shoot_freq_ = LibXR::Topic::CreateTopic<float>("trig_freq");
+
+  LauncherEvent launcher_event_ = LauncherEvent::SET_FRICMODE_RELAX;
+  LauncherState launcher_state_ = LauncherState::RELAX;
+  TRIGMODE trig_mode_ = TRIGMODE::RELAX;
+  TRIGMODE last_trig_mode_ = TRIGMODE::RELAX;
+
+  RefereeData referee_data_{.heat_limit = 0.0f, .heat_cooling = 0.0f};
+  HeatLimit heat_limit_{
+      .single_heat = 0.0f,
+      .launched_num = 0.0f,
+      .current_heat = 0.0f,
+      .heat_threshold = 0.0f,
+      .allow_fire = true,
+  };
 
   /*-----------------工具函数---------------------------------------------------*/
 
@@ -704,20 +718,6 @@ class InfantryLauncher {
       pid_fric_1_.SetOutLimit(1.5f);
     }
   }
-
-  LauncherEvent launcher_event_ = LauncherEvent::SET_FRICMODE_RELAX;
-  LauncherState launcher_state_ = LauncherState::RELAX;
-  TRIGMODE trig_mode_ = TRIGMODE::RELAX;
-  TRIGMODE last_trig_mode_ = TRIGMODE::RELAX;
-
-  RefereeData referee_data_{.heat_limit = 0.0f, .heat_cooling = 0.0f};
-  HeatLimit heat_limit_{
-      .single_heat = 0.0f,
-      .launched_num = 0.0f,
-      .current_heat = 0.0f,
-      .heat_threshold = 0.0f,
-      .allow_fire = true,
-  };
 
 #ifdef DEBUG
   LibXR::RamFS::File cmd_file_;
