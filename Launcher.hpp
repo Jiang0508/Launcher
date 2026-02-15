@@ -91,8 +91,6 @@ depends:
 #include "message.hpp"
 #include "mutex.hpp"
 #include "pid.hpp"
-#include "thread.hpp"
-#include "timebase.hpp"
 
 template <class LauncherType>
 class Launcher : public LibXR::Application {
@@ -145,29 +143,6 @@ class Launcher : public LibXR::Application {
           UNUSED(event_id);
           self->mutex_.Lock();
           self->launcher_.LostCtrl();
-          self->mutex_.Unlock();
-        },
-        this);
-
-    auto start_ctrl_callback = LibXR::Callback<uint32_t>::Create(
-        [](bool in_isr, Launcher* self, uint32_t event_id) {
-          UNUSED(in_isr);
-          UNUSED(event_id);
-          self->mutex_.Lock();
-          self->launcher_.SetMode(
-              static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX));
-          self->mutex_.Unlock();
-        },
-        this);
-
-    cmd->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
-    cmd->GetEvent().Register(CMD::CMD_EVENT_START_CTRL, start_ctrl_callback);
-
-    auto event_callback = LibXR::Callback<uint32_t>::Create(
-        [](bool in_isr, Launcher* self, uint32_t event_id) {
-          UNUSED(in_isr);
-          self->mutex_.Lock();
-          self->launcher_.SetMode(event_id);
           self->mutex_.Unlock();
         },
         this);

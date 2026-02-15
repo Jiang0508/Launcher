@@ -150,23 +150,6 @@ class HeroLauncher {
     /*弹频*/
     float trig_freq;
   };
-
-  /**
-   * @brief 构造 HeroLauncher
-   * @param hw 硬件容器
-   * @param app 应用管理器
-   * @param motor_fric_front_left 前左摩擦轮电机
-   * @param motor_fric_front_right 前右摩擦轮电机
-   * @param motor_fric_back_left 后左摩擦轮电机
-   * @param motor_fric_back_right 后右摩擦轮电机
-   * @param motor_trig 拨弹电机
-   * @param task_stack_depth 线程栈深（由外壳使用）
-   * @param trig_angle_pid 拨弹角度环参数
-   * @param trig_speed_pid 拨弹速度环参数
-   * @param fric_speed_pid_0~3 摩擦轮速度环参数
-   * @param launcher_param 发射器参数
-   * @param cmd CMD 模块指针
-   */
   HeroLauncher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
                RMMotor* motor_fric_front_left, RMMotor* motor_fric_front_right,
                RMMotor* motor_fric_back_left, RMMotor* motor_fric_back_right,

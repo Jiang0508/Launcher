@@ -112,12 +112,11 @@ class InfantryLauncher {
    * @param cmd CMD模块指针
    * @details 完成线程创建、失控事件注册和调试命令文件注册。
    */
-  InfantryLauncher(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app,
-                   RMMotor *motor_fric_front_left,
-                   RMMotor *motor_fric_front_right,
-                   RMMotor *motor_fric_back_left,
-                   RMMotor *motor_fric_back_right,
-                   RMMotor *motor_trig,
+  InfantryLauncher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
+                   RMMotor* motor_fric_front_left,
+                   RMMotor* motor_fric_front_right,
+                   RMMotor* motor_fric_back_left,
+                   RMMotor* motor_fric_back_right, RMMotor* motor_trig,
                    uint32_t task_stack_depth,
                    LibXR::PID<float>::Param pid_param_trig_angle,
                    LibXR::PID<float>::Param pid_param_trig_speed,
@@ -125,8 +124,7 @@ class InfantryLauncher {
                    LibXR::PID<float>::Param pid_param_fric_1,
                    LibXR::PID<float>::Param pid_param_fric_2,
                    LibXR::PID<float>::Param pid_param_fric_3,
-                   LauncherParam launch_param,
-                   CMD *cmd)
+                   LauncherParam launch_param, CMD* cmd)
       : motor_fric_0_(motor_fric_front_left),
         motor_fric_1_(motor_fric_front_right),
         motor_trig_(motor_trig),
@@ -135,8 +133,16 @@ class InfantryLauncher {
         pid_fric_0_(pid_param_fric_0),
         pid_fric_1_(pid_param_fric_1),
         param_(launch_param),
-        cmd_(cmd),
-        cmd_file_(LibXR::RamFS::CreateFile("launcher", CommandFunc, this)) {
+        cmd_(cmd)
+#ifdef DEBUG
+        ,
+        cmd_file_(LibXR::RamFS::CreateFile(
+            "launcher",
+            debug_core::command_thunk<InfantryLauncher,
+                                      &InfantryLauncher::DebugCommand>,
+            this))
+#endif
+  {
     UNUSED(app);
     UNUSED(task_stack_depth);
     UNUSED(pid_param_fric_2);
@@ -156,7 +162,9 @@ class InfantryLauncher {
         this);
     cmd_->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
 
+#ifdef DEBUG
     hw.template FindOrExit<LibXR::RamFS>({"ramfs"})->Add(cmd_file_);
+#endif
   }
 
   /**
@@ -164,7 +172,7 @@ class InfantryLauncher {
    * @param launcher InfantryLauncher对象指针
    * @details 周期执行数据更新、热量管理、状态机计算、控制输出与调试话题发布。
    */
-  static void ThreadFunction(InfantryLauncher *launcher) {
+  static void ThreadFunction(InfantryLauncher* launcher) {
     LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> launcher_cmd_sub(
         "launcher_cmd");
     launcher_cmd_sub.StartWaiting();
@@ -183,9 +191,9 @@ class InfantryLauncher {
       launcher->mutex_.Lock();
       launcher->Update();
       launcher->Solve();
-      launcher->Control();
       launcher->PublishTopics();
       launcher->mutex_.Unlock();
+      launcher->Control();
 
       LibXR::Thread::SleepUntil(last_time, 2);
     }
@@ -224,9 +232,10 @@ class InfantryLauncher {
 
   /**
    * @brief 状态机主入口
-    * @details 根据当前状态、命令输入和热量限制计算目标拨弹角度和摩擦轮转速，并处理卡弹逻辑。
-    */
-  void Solve(){
+   * @details
+   * 根据当前状态、命令输入和热量限制计算目标拨弹角度和摩擦轮转速，并处理卡弹逻辑。
+   */
+  void Solve() {
     UpdateHeatControl();
     RunStateMachine();
     UpdateShotLatency();
@@ -265,8 +274,8 @@ class InfantryLauncher {
                                       .reduction_ratio = 19.0f,
                                       .velocity = out_fric_1};
 
-    auto motor_control = [&](Motor *motor, const Motor::Feedback &fb,
-                             const Motor::MotorCmd &cmd) {
+    auto motor_control = [&](Motor* motor, const Motor::Feedback& fb,
+                             const Motor::MotorCmd& cmd) {
       if (fb.state == 0) {
         motor->Enable();
       } else if (fb.state != 0 && fb.state != 1) {
@@ -309,334 +318,9 @@ class InfantryLauncher {
    * @return int 命令执行结果，0表示成功，负值表示失败
    * @details 支持 state/motor/heat/shot/full 视图以及 once/monitor 调试模式。
    */
-  int DebugCommand(int argc, char **argv) {
-    enum class DebugView : uint8_t {
-      STATE,
-      MOTOR,
-      HEAT,
-      SHOT,
-      FULL,
-    };
-
-    struct DebugSnapshot {
-      LauncherEvent launcher_event;
-      LauncherState launcher_state;
-      TRIGMODE trig_mode;
-
-      bool is_fire_cmd;
-      bool allow_fire;
-      bool shoot_active;
-      bool jam_reverse;
-      bool long_press;
-
-      float dt;
-      float target_rpm;
-      float trig_freq;
-      float trig_angle;
-      float trig_target_angle;
-      float number;
-      float shoot_dt;
-      float jam_keep_time_s;
-
-      float heat_now;
-      float heat_limit;
-      float heat_cooling;
-      float heat_single;
-
-      Motor::Feedback fric_0;
-      Motor::Feedback fric_1;
-      Motor::Feedback trig;
-    };
-
-    auto event_to_string = [](LauncherEvent event) {
-      switch (event) {
-        case LauncherEvent::SET_FRICMODE_RELAX:
-          return "RELAX";
-        case LauncherEvent::SET_FRICMODE_SAFE:
-          return "SAFE";
-        case LauncherEvent::SET_FRICMODE_READY:
-          return "READY";
-        default:
-          return "UNKNOWN";
-      }
-    };
-
-    auto state_to_string = [](LauncherState state) {
-      switch (state) {
-        case LauncherState::RELAX:
-          return "RELAX";
-        case LauncherState::STOP:
-          return "STOP";
-        case LauncherState::NORMAL:
-          return "NORMAL";
-        case LauncherState::JAMMED:
-          return "JAMMED";
-        default:
-          return "UNKNOWN";
-      }
-    };
-
-    auto trig_mode_to_string = [](TRIGMODE mode) {
-      switch (mode) {
-        case TRIGMODE::RELAX:
-          return "RELAX";
-        case TRIGMODE::SAFE:
-          return "SAFE";
-        case TRIGMODE::SINGLE:
-          return "SINGLE";
-        case TRIGMODE::CONTINUE:
-          return "CONTINUE";
-        case TRIGMODE::JAM:
-          return "JAM";
-        default:
-          return "UNKNOWN";
-      }
-    };
-
-    auto view_to_string = [](DebugView view) {
-      switch (view) {
-        case DebugView::STATE:
-          return "state";
-        case DebugView::MOTOR:
-          return "motor";
-        case DebugView::HEAT:
-          return "heat";
-        case DebugView::SHOT:
-          return "shot";
-        case DebugView::FULL:
-          return "full";
-        default:
-          return "unknown";
-      }
-    };
-
-    auto parse_view = [](const char *arg, DebugView *view) {
-      if (strcmp(arg, "state") == 0) {
-        *view = DebugView::STATE;
-        return true;
-      }
-      if (strcmp(arg, "motor") == 0) {
-        *view = DebugView::MOTOR;
-        return true;
-      }
-      if (strcmp(arg, "heat") == 0) {
-        *view = DebugView::HEAT;
-        return true;
-      }
-      if (strcmp(arg, "shot") == 0) {
-        *view = DebugView::SHOT;
-        return true;
-      }
-      if (strcmp(arg, "full") == 0) {
-        *view = DebugView::FULL;
-        return true;
-      }
-      return false;
-    };
-
-    auto capture_snapshot = [this]() {
-      DebugSnapshot s{};
-      mutex_.Lock();
-      s.launcher_event = launcher_event_;
-      s.launcher_state = launcher_state_;
-      s.trig_mode = trig_mode_;
-
-      s.is_fire_cmd = launcher_cmd_.isfire;
-      s.allow_fire = heat_limit_.allow_fire;
-      s.shoot_active = shoot_active_;
-      s.jam_reverse = is_reverse_;
-      s.long_press = press_continue_;
-
-      s.dt = dt_;
-      s.target_rpm = target_rpm_;
-      s.trig_freq = trig_freq_;
-      s.trig_angle = trig_angle_;
-      s.trig_target_angle = target_trig_angle_;
-      s.number = number_;
-      s.shoot_dt = shoot_dt_;
-      s.jam_keep_time_s = jam_keep_time_s_;
-
-      s.heat_now = heat_limit_.current_heat;
-      s.heat_limit = referee_data_.heat_limit;
-      s.heat_cooling = referee_data_.heat_cooling;
-      s.heat_single = heat_limit_.single_heat;
-
-      s.fric_0 = param_fric_0_;
-      s.fric_1 = param_fric_1_;
-      s.trig = param_trig_;
-      mutex_.Unlock();
-      return s;
-    };
-
-    auto print_state = [&](const DebugSnapshot &s) {
-      float hz = (s.dt > 1e-6f) ? (1.0f / s.dt) : 0.0f;
-      LibXR::STDIO::Printf(
-          "  state: event=%s(%u), launcher=%s, trig=%s, dt=%.4f s (%.1f Hz)\r\n",
-          event_to_string(s.launcher_event),
-          static_cast<unsigned>(s.launcher_event),
-          state_to_string(s.launcher_state),
-          trig_mode_to_string(s.trig_mode), s.dt, hz);
-      LibXR::STDIO::Printf(
-          "  cmd: fire=%d, allow_fire=%d, long_press=%d, shoot_active=%d\r\n",
-          s.is_fire_cmd ? 1 : 0, s.allow_fire ? 1 : 0, s.long_press ? 1 : 0,
-          s.shoot_active ? 1 : 0);
-    };
-
-    auto print_motor = [&](const DebugSnapshot &s) {
-      LibXR::STDIO::Printf(
-          "  motor: target_rpm=%.1f, trig_target=%.3f rad, trig_now=%.3f rad\r\n",
-          s.target_rpm, s.trig_target_angle, s.trig_angle);
-      LibXR::STDIO::Printf(
-          "    fric0: rpm=%.1f, omega=%.3f, torque=%.3f, state=%u\r\n",
-          s.fric_0.velocity, s.fric_0.omega, s.fric_0.torque,
-          static_cast<unsigned>(s.fric_0.state));
-      LibXR::STDIO::Printf(
-          "    fric1: rpm=%.1f, omega=%.3f, torque=%.3f, state=%u\r\n",
-          s.fric_1.velocity, s.fric_1.omega, s.fric_1.torque,
-          static_cast<unsigned>(s.fric_1.state));
-      LibXR::STDIO::Printf(
-          "    trig : rpm=%.1f, omega=%.3f, torque=%.3f, state=%u\r\n",
-          s.trig.velocity, s.trig.omega, s.trig.torque,
-          static_cast<unsigned>(s.trig.state));
-    };
-
-    auto print_heat = [&](const DebugSnapshot &s) {
-      LibXR::STDIO::Printf(
-          "  heat: now=%.1f, limit=%.1f, cooling=%.1f, single=%.1f, trig_freq=%.2f Hz\r\n",
-          s.heat_now, s.heat_limit, s.heat_cooling, s.heat_single, s.trig_freq);
-    };
-
-    auto print_shot = [&](const DebugSnapshot &s) {
-      LibXR::STDIO::Printf(
-          "  shot: count=%.0f, latency=%.3f s, jam_keep=%.3f s, jam_reverse=%d\r\n",
-          s.number, s.shoot_dt, s.jam_keep_time_s, s.jam_reverse ? 1 : 0);
-    };
-
-    auto print_once = [&](DebugView view) {
-      DebugSnapshot s = capture_snapshot();
-      LibXR::STDIO::Printf("[%lu ms] launcher %s\r\n", LibXR::Thread::GetTime(),
-                           view_to_string(view));
-      switch (view) {
-        case DebugView::STATE:
-          print_state(s);
-          break;
-        case DebugView::MOTOR:
-          print_motor(s);
-          break;
-        case DebugView::HEAT:
-          print_heat(s);
-          break;
-        case DebugView::SHOT:
-          print_shot(s);
-          break;
-        case DebugView::FULL:
-          print_state(s);
-          print_motor(s);
-          print_heat(s);
-          print_shot(s);
-          break;
-      }
-    };
-
-    if (argc == 1) {
-      LibXR::STDIO::Printf("Usage:\r\n");
-      LibXR::STDIO::Printf("  monitor\r\n");
-      LibXR::STDIO::Printf(
-          "  monitor <time_ms> [interval_ms] [state|motor|heat|shot|full]\r\n");
-      LibXR::STDIO::Printf("  once [state|motor|heat|shot|full]\r\n");
-      LibXR::STDIO::Printf("  state | motor | heat | shot | full\r\n");
-      return 0;
-    }
-
-    if (strcmp(argv[1], "monitor") == 0) {
-      if (argc == 2) {
-        print_once(DebugView::FULL);
-        return 0;
-      }
-
-      if (argc > 5) {
-        LibXR::STDIO::Printf("Error: Too many arguments for monitor.\r\n");
-        return -1;
-      }
-
-      int time_ms = atoi(argv[2]);
-      int interval_ms = 1000;
-      DebugView view = DebugView::FULL;
-      bool third_is_view = false;
-
-      if (argc >= 4) {
-        DebugView parsed_view = DebugView::FULL;
-        if (parse_view(argv[3], &parsed_view)) {
-          view = parsed_view;
-          third_is_view = true;
-        } else {
-          interval_ms = atoi(argv[3]);
-        }
-      }
-
-      if (argc == 5) {
-        if (third_is_view) {
-          LibXR::STDIO::Printf(
-              "Error: Invalid monitor args. Use monitor <time_ms> [interval_ms] [view].\r\n");
-          return -1;
-        }
-        if (!parse_view(argv[4], &view)) {
-          LibXR::STDIO::Printf("Error: Unknown view '%s'.\r\n", argv[4]);
-          return -1;
-        }
-      }
-
-      if (time_ms <= 0 || interval_ms <= 0) {
-        LibXR::STDIO::Printf(
-            "Error: time_ms and interval_ms must be > 0.\r\n");
-        return -1;
-      }
-
-      int elapsed = 0;
-      while (elapsed < time_ms) {
-        print_once(view);
-        LibXR::Thread::Sleep(interval_ms);
-        elapsed += interval_ms;
-      }
-      return 0;
-    }
-
-    if (strcmp(argv[1], "once") == 0) {
-      if (argc > 3) {
-        LibXR::STDIO::Printf("Error: Too many arguments for once.\r\n");
-        return -1;
-      }
-      DebugView view = DebugView::FULL;
-      if (argc == 3 && !parse_view(argv[2], &view)) {
-        LibXR::STDIO::Printf("Error: Unknown view '%s'.\r\n", argv[2]);
-        return -1;
-      }
-      print_once(view);
-      return 0;
-    }
-
-    DebugView direct_view = DebugView::FULL;
-    if (argc == 2 && parse_view(argv[1], &direct_view)) {
-      print_once(direct_view);
-      return 0;
-    }
-
-    LibXR::STDIO::Printf("Error: Unknown command '%s'.\r\n", argv[1]);
-    return -1;
-  }
-
- private:
-  /**
-   * @brief RamFS静态命令回调包装
-   * @param self InfantryLauncher对象指针
-   * @param argc 命令参数个数
-   * @param argv 命令参数数组
-   * @return int 命令执行结果
-   * @details 将静态回调转发到对象成员函数 DebugCommand。
-   */
-  static int CommandFunc(InfantryLauncher *self, int argc, char **argv) {
-    return self->DebugCommand(argc, argv);
-  }
+#ifdef DEBUG
+  int DebugCommand(int argc, char** argv);
+#endif
 
  private:
   /*-----------------工具函数---------------------------------------------------*/
@@ -662,8 +346,8 @@ class InfantryLauncher {
       return;
     }
 
-    launcher_state_ = launcher_cmd_.isfire ? LauncherState::NORMAL
-                                           : LauncherState::STOP;
+    launcher_state_ =
+        launcher_cmd_.isfire ? LauncherState::NORMAL : LauncherState::STOP;
   }
 
   /**
@@ -756,9 +440,8 @@ class InfantryLauncher {
             is_reverse_ = true;
           }
           target_trig_angle_ =
-              trig_angle_ +
-              (is_reverse_ ? -2.0f * launcher::param::TRIG_STEP
-                           : launcher::param::TRIG_STEP);
+              trig_angle_ + (is_reverse_ ? -2.0f * launcher::param::TRIG_STEP
+                                         : launcher::param::TRIG_STEP);
           is_reverse_ = !is_reverse_;
           last_jam_time_ = now;
         }
@@ -842,7 +525,8 @@ class InfantryLauncher {
     }
     last_heat_time_ = now;
 
-    heat_limit_.current_heat += heat_limit_.single_heat * heat_limit_.launched_num;
+    heat_limit_.current_heat +=
+        heat_limit_.single_heat * heat_limit_.launched_num;
     heat_limit_.launched_num = 0.0f;
 
     if (heat_limit_.current_heat <
@@ -861,10 +545,11 @@ class InfantryLauncher {
       return;
     }
 
-    if (residuary_heat <= heat_limit_.single_heat * heat_limit_.heat_threshold) {
+    if (residuary_heat <=
+        heat_limit_.single_heat * heat_limit_.heat_threshold) {
       float safe_freq = referee_data_.heat_cooling / heat_limit_.single_heat;
-      float ratio =
-          residuary_heat / (heat_limit_.single_heat * heat_limit_.heat_threshold);
+      float ratio = residuary_heat /
+                    (heat_limit_.single_heat * heat_limit_.heat_threshold);
       trig_freq_ = ratio * (param_.expect_trig_freq_ - safe_freq) + safe_freq;
       return;
     }
@@ -915,7 +600,7 @@ class InfantryLauncher {
    * @param dt 控制周期
    * @details 角度环生成参考速度，速度环生成最终控制输出，并进行速度限幅。
    */
-  void TrigControl(float &out_trig, float target_trig_angle, float dt) {
+  void TrigControl(float& out_trig, float target_trig_angle, float dt) {
     float plate_omega_ref = pid_trig_angle_.Calculate(
         target_trig_angle, trig_angle_,
         param_trig_.omega / param_.trig_gear_ratio, dt);
@@ -935,7 +620,7 @@ class InfantryLauncher {
    * @param dt 控制周期
    * @details 速度环计算摩擦轮输出，SAFE 模式下对输出限幅做缓停处理。
    */
-  void FricControl(float &out_fric_0, float &out_fric_1, float target_rpm,
+  void FricControl(float& out_fric_0, float& out_fric_1, float target_rpm,
                    float dt) {
     out_fric_0 = pid_fric_0_.Calculate(target_rpm, param_fric_0_.velocity, dt);
     out_fric_1 = pid_fric_1_.Calculate(target_rpm, param_fric_1_.velocity, dt);
@@ -960,10 +645,10 @@ class InfantryLauncher {
       .allow_fire = true,
   };
 
-  private:
-  RMMotor *motor_fric_0_;
-  RMMotor *motor_fric_1_;
-  RMMotor *motor_trig_;
+ private:
+  RMMotor* motor_fric_0_;
+  RMMotor* motor_fric_1_;
+  RMMotor* motor_trig_;
 
   Motor::Feedback param_fric_0_{};
   Motor::Feedback param_fric_1_{};
@@ -1005,13 +690,15 @@ class InfantryLauncher {
 
   LibXR::Thread thread_;
   LibXR::Mutex mutex_;
-  CMD *cmd_;
+  CMD* cmd_;
 
   LibXR::Topic shoot_waiting_ = LibXR::Topic::CreateTopic<float>("shoot_dt");
   LibXR::Topic shoot_number_ = LibXR::Topic::CreateTopic<float>("shoot_number");
   LibXR::Topic shoot_freq_ = LibXR::Topic::CreateTopic<float>("trig_freq");
 
+#ifdef DEBUG
   LibXR::RamFS::File cmd_file_;
+#endif
 };
 
 #ifdef DEBUG
