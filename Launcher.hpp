@@ -91,6 +91,13 @@ depends:
 #include "message.hpp"
 #include "mutex.hpp"
 #include "pid.hpp"
+#include "thread.hpp"
+#include "timebase.hpp"
+
+#ifdef DEBUG
+#include "DebugCore.hpp"
+#include "ramfs.hpp"
+#endif
 
 template <class LauncherType>
 class Launcher : public LibXR::Application {
@@ -126,8 +133,16 @@ class Launcher : public LibXR::Application {
                       launcher_param.fric2_setpoint_speed,
                       launcher_param.trig_gear_ratio,
                       launcher_param.num_trig_tooth, launcher_param.trig_freq_},
-                  cmd) {
-    UNUSED(hw);
+                  cmd)
+#ifdef DEBUG
+        ,
+        cmd_file_(LibXR::RamFS::CreateFile(
+            "launcher",
+            debug_core::command_thunk<LauncherType,
+                                      &LauncherType::DebugCommand>,
+            &launcher_))
+#endif
+  {
     UNUSED(app);
 
 #ifdef DEBUG
@@ -135,7 +150,7 @@ class Launcher : public LibXR::Application {
 #endif
 
     thread_.Create(this, ThreadFunc, "LauncherThread", task_stack_depth,
-                   thread_priority);
+                   LibXR::Thread::Priority::HIGH);
 
     auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
         [](bool in_isr, Launcher* self, uint32_t event_id) {
@@ -146,8 +161,29 @@ class Launcher : public LibXR::Application {
           self->mutex_.Unlock();
         },
         this);
-    launcher_event_.Register(
-        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX), callback);
+
+    auto start_ctrl_callback = LibXR::Callback<uint32_t>::Create(
+        [](bool in_isr, Launcher* self, uint32_t event_id) {
+          UNUSED(in_isr);
+          UNUSED(event_id);
+          self->mutex_.Lock();
+          self->launcher_.SetMode(
+              static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX));
+          self->mutex_.Unlock();
+        },
+        this);
+
+    cmd->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
+    cmd->GetEvent().Register(CMD::CMD_EVENT_START_CTRL, start_ctrl_callback);
+
+    auto event_callback = LibXR::Callback<uint32_t>::Create(
+        [](bool in_isr, Launcher* self, uint32_t event_id) {
+          UNUSED(in_isr);
+          self->mutex_.Lock();
+          self->launcher_.SetMode(event_id);
+          self->mutex_.Unlock();
+        },
+        this);
     launcher_event_.Register(
         static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX),
         event_callback);
@@ -166,4 +202,32 @@ class Launcher : public LibXR::Application {
  private:
   LauncherType launcher_;
   LibXR::Event launcher_event_;
+  LibXR::Thread thread_;
+  LibXR::Mutex mutex_;
+
+#ifdef DEBUG
+  LibXR::RamFS::File cmd_file_;
+#endif
+
+  static void ThreadFunc(Launcher* self) {
+    LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> cmd_sub("launcher_cmd");
+    cmd_sub.StartWaiting();
+
+    while (true) {
+      auto last_time = LibXR::Timebase::GetMilliseconds();
+
+      if (cmd_sub.Available()) {
+        self->launcher_.launcher_cmd_ = cmd_sub.GetData();
+        cmd_sub.StartWaiting();
+      }
+
+      self->mutex_.Lock();
+      self->launcher_.Update();
+      self->launcher_.Solve();
+      self->mutex_.Unlock();
+      self->launcher_.Control();
+
+      LibXR::Thread::SleepUntil(last_time, 2);
+    }
+  }
 };
