@@ -76,7 +76,6 @@ depends:
 === END MANIFEST === */
 // clang-format on
 
-#include <array>
 #include <cstdint>
 
 #include "CMD.hpp"
@@ -84,19 +83,31 @@ depends:
 #include "InfantryLauncher.hpp"
 #include "RMMotor.hpp"
 #include "app_framework.hpp"
+#include "event.hpp"
+#include "libxr_cb.hpp"
 #include "libxr_def.hpp"
+#include "libxr_time.hpp"
+#include "message.hpp"
+#include "mutex.hpp"
 #include "pid.hpp"
+#include "thread.hpp"
+#include "timebase.hpp"
+
+#ifdef DEBUG
+#include "DebugCore.hpp"
+#include "ramfs.hpp"
+#endif
 
 template <class LauncherType>
 class Launcher : public LibXR::Application {
  public:
   using LauncherEvent = typename LauncherType::LauncherEvent;
+
   struct LauncherParam {
     float fric1_setpoint_speed;
     float fric2_setpoint_speed;
     float trig_gear_ratio;
     uint8_t num_trig_tooth;
-    /*弹频*/
     float trig_freq_;
   };
 
@@ -121,40 +132,101 @@ class Launcher : public LibXR::Application {
                       launcher_param.fric2_setpoint_speed,
                       launcher_param.trig_gear_ratio,
                       launcher_param.num_trig_tooth, launcher_param.trig_freq_},
-                  cmd) {
-    UNUSED(hw);
+                  cmd)
+#ifdef DEBUG
+        ,
+        cmd_file_(LibXR::RamFS::CreateFile(
+            "launcher",
+            debug_core::command_thunk<LauncherType,
+                                      &LauncherType::DebugCommand>,
+            &launcher_))
+#endif
+  {
     UNUSED(app);
 
-    auto callback = LibXR::Callback<uint32_t>::Create(
-        [](bool in_isr, Launcher* launcher, uint32_t event_id) {
+#ifdef DEBUG
+    hw.template FindOrExit<LibXR::RamFS>({"ramfs"})->Add(cmd_file_);
+#endif
+
+    thread_.Create(this, ThreadFunc, "LauncherThread", task_stack_depth,
+                   LibXR::Thread::Priority::HIGH);
+
+    auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
+        [](bool in_isr, Launcher* self, uint32_t event_id) {
           UNUSED(in_isr);
-          launcher->EventHandler(event_id);
+          UNUSED(event_id);
+          self->mutex_.Lock();
+          self->launcher_.LostCtrl();
+          self->mutex_.Unlock();
+        },
+        this);
+
+    auto start_ctrl_callback = LibXR::Callback<uint32_t>::Create(
+        [](bool in_isr, Launcher* self, uint32_t event_id) {
+          UNUSED(in_isr);
+          UNUSED(event_id);
+          self->mutex_.Lock();
+          self->launcher_.SetMode(
+              static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX));
+          self->mutex_.Unlock();
+        },
+        this);
+
+    cmd->GetEvent().Register(CMD::CMD_EVENT_LOST_CTRL, lost_ctrl_callback);
+    cmd->GetEvent().Register(CMD::CMD_EVENT_START_CTRL, start_ctrl_callback);
+
+    auto event_callback = LibXR::Callback<uint32_t>::Create(
+        [](bool in_isr, Launcher* self, uint32_t event_id) {
+          UNUSED(in_isr);
+          self->mutex_.Lock();
+          self->launcher_.SetMode(event_id);
+          self->mutex_.Unlock();
         },
         this);
     launcher_event_.Register(
-        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX), callback);
+        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_RELAX),
+        event_callback);
     launcher_event_.Register(
-        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_SAFE), callback);
+        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_SAFE),
+        event_callback);
     launcher_event_.Register(
-        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_READY), callback);
+        static_cast<uint32_t>(LauncherEvent::SET_FRICMODE_READY),
+        event_callback);
   }
 
-  /**
-   * @brief 获取发射器的事件处理器
-   * @details 通过此事件处理器可以向发射器发送事件消息，控制发射器的行为模式
-   * @return LibXR::Event& 事件处理器的引用
-   */
   LibXR::Event& GetEvent() { return launcher_event_; }
 
-  /**
-   * @brief 事件处理器，根据传入的事件ID执行相应操作
-   * @param event_id 触发的事件ID
-   */
-  void EventHandler(uint32_t event_id) { launcher_.SetMode(event_id); }
-
-  void OnMonitor() override {}
+  void OnMonitor() override { launcher_.OnMonitor(); }
 
  private:
   LauncherType launcher_;
   LibXR::Event launcher_event_;
+  LibXR::Thread thread_;
+  LibXR::Mutex mutex_;
+
+#ifdef DEBUG
+  LibXR::RamFS::File cmd_file_;
+#endif
+
+  static void ThreadFunc(Launcher* self) {
+    LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> cmd_sub("launcher_cmd");
+    cmd_sub.StartWaiting();
+
+    while (true) {
+      auto last_time = LibXR::Timebase::GetMilliseconds();
+
+      if (cmd_sub.Available()) {
+        self->launcher_.launcher_cmd_ = cmd_sub.GetData();
+        cmd_sub.StartWaiting();
+      }
+
+      self->mutex_.Lock();
+      self->launcher_.Update();
+      self->launcher_.Solve();
+      self->mutex_.Unlock();
+      self->launcher_.Control();
+
+      LibXR::Thread::SleepUntil(last_time, 2);
+    }
+  }
 };
