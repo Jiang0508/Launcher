@@ -212,10 +212,9 @@ class Launcher : public LibXR::Application {
   static void ThreadFunc(Launcher* self) {
     LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> cmd_sub("launcher_cmd");
     cmd_sub.StartWaiting();
+    auto last_time = LibXR::Timebase::GetMilliseconds();
 
     while (true) {
-      auto last_time = LibXR::Timebase::GetMilliseconds();
-
       if (cmd_sub.Available()) {
         self->launcher_.launcher_cmd_ = cmd_sub.GetData();
         cmd_sub.StartWaiting();
