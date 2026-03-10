@@ -211,9 +211,16 @@ class Launcher : public LibXR::Application {
   static void ThreadFunc(Launcher* self) {
     LibXR::Topic::ASyncSubscriber<CMD::LauncherCMD> cmd_sub("launcher_cmd");
     cmd_sub.StartWaiting();
-    auto last_time = LibXR::Timebase::GetMilliseconds();
+    self->last_wakeup_time_ = LibXR::Timebase::GetMilliseconds();
+    self->last_online_time_ = LibXR::Timebase::GetMicroseconds();
 
     while (true) {
+      LibXR::Thread::SleepUntil(self->last_wakeup_time_, 2);
+
+      auto now = LibXR::Timebase::GetMicroseconds();
+      self->launcher_.SetControlDt((now - self->last_online_time_).ToSecondf());
+      self->last_online_time_ = now;
+
       if (cmd_sub.Available()) {
         self->launcher_.launcher_cmd_ = cmd_sub.GetData();
         cmd_sub.StartWaiting();
@@ -224,8 +231,9 @@ class Launcher : public LibXR::Application {
       self->launcher_.Solve();
       self->mutex_.Unlock();
       self->launcher_.Control();
-
-      LibXR::Thread::SleepUntil(last_time, 2);
     }
   }
+
+  LibXR::MillisecondTimestamp last_wakeup_time_ = 0;
+  LibXR::MicrosecondTimestamp last_online_time_ = 0;
 };

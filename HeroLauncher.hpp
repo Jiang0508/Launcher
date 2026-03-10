@@ -200,9 +200,7 @@ class HeroLauncher {
    * @brief 更新电机反馈和状态量
    */
   void Update() {
-    auto now = LibXR::Timebase::GetMicroseconds();
-    this->dt_ = (now - this->last_wakeup_).ToSecondf();
-    this->last_wakeup_ = now;
+    this->last_wakeup_ = LibXR::Timebase::GetMicroseconds();
 
     const float LAST_TRIG_MOTOR_ANGLE =
         LibXR::CycleValue<float>(param_trig_.abs_angle);
@@ -309,6 +307,8 @@ class HeroLauncher {
   }
 
   void OnMonitor() {}
+
+  void SetControlDt(float dt) { dt_ = dt; }
 
   /**
    * @brief 调试命令入口
