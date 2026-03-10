@@ -308,6 +308,8 @@ class HeroLauncher {
 
   void OnMonitor() {}
 
+  void SetControlDt(float dt) { dt_ = dt; }
+
   /**
    * @brief 调试命令入口
    */

@@ -138,7 +138,7 @@ class InfantryLauncher {
     UNUSED(motor_fric_back_right);
     UNUSED(cmd);
 
-    last_online_time_ = LibXR::Timebase::GetMilliseconds();
+    last_online_time_ = LibXR::Timebase::GetMicroseconds();
     last_heat_time_ = LibXR::Timebase::GetMilliseconds();
   }
 
@@ -147,9 +147,7 @@ class InfantryLauncher {
    * @details 更新周期时间、电机反馈、拨弹角度，并刷新发射器总状态。
    */
   void Update() {
-    auto now = LibXR::Timebase::GetMilliseconds();
-    dt_ = (now - last_online_time_).ToSecondf();
-    last_online_time_ = now;
+    last_online_time_ = LibXR::Timebase::GetMicroseconds();
 
     referee_data_.heat_limit = 260.0f;
     referee_data_.heat_cooling = 20.0f;
@@ -245,6 +243,8 @@ class InfantryLauncher {
     motor_control(motor_fric_1_, fric_1_fb, cmd_fric_1);
   }
 
+  void SetControlDt(float dt) { dt_ = dt; }
+
   /**
    * @brief 设置摩擦轮模式事件
    * @param mode 事件ID，对应 LauncherEvent
@@ -336,7 +336,7 @@ class InfantryLauncher {
   LibXR::MillisecondTimestamp last_trig_time_ = 0;
   LibXR::MillisecondTimestamp last_jam_time_ = 0;
   LibXR::MillisecondTimestamp last_heat_time_ = 0;
-  LibXR::MillisecondTimestamp last_online_time_ = 0;
+  LibXR::MicrosecondTimestamp last_online_time_ = 0;
   LibXR::MillisecondTimestamp shoot_time_ = 0;
   LibXR::MillisecondTimestamp receive_fire_time_ = 0;
   LibXR::MillisecondTimestamp shot_start_time_ = 0;
