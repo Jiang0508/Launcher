@@ -65,6 +65,7 @@ constructor_args:
       num_trig_tooth: 6
       trig_freq_: 0.0
   - cmd: '@&cmd'
+  - thread_priority: LibXR::Thread::Priority::HIGH
 template_args:
   - LauncherType: HeroLauncher
 required_hardware:
@@ -111,17 +112,19 @@ class Launcher : public LibXR::Application {
     float trig_freq_;
   };
 
-  Launcher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-           RMMotor* motor_fric_front_left, RMMotor* motor_fric_front_right,
-           RMMotor* motor_fric_back_left, RMMotor* motor_fric_back_right,
-           RMMotor* motor_trig, uint32_t task_stack_depth,
-           LibXR::PID<float>::Param pid_trig_angle,
-           LibXR::PID<float>::Param pid_trig_speed,
-           LibXR::PID<float>::Param pid_fric_speed_0,
-           LibXR::PID<float>::Param pid_fric_speed_1,
-           LibXR::PID<float>::Param pid_fric_speed_2,
-           LibXR::PID<float>::Param pid_fric_speed_3,
-           LauncherParam launcher_param, CMD* cmd)
+  Launcher(
+      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
+      RMMotor* motor_fric_front_left, RMMotor* motor_fric_front_right,
+      RMMotor* motor_fric_back_left, RMMotor* motor_fric_back_right,
+      RMMotor* motor_trig, uint32_t task_stack_depth,
+      LibXR::PID<float>::Param pid_trig_angle,
+      LibXR::PID<float>::Param pid_trig_speed,
+      LibXR::PID<float>::Param pid_fric_speed_0,
+      LibXR::PID<float>::Param pid_fric_speed_1,
+      LibXR::PID<float>::Param pid_fric_speed_2,
+      LibXR::PID<float>::Param pid_fric_speed_3, LauncherParam launcher_param,
+      CMD* cmd,
+      LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::HIGH)
       : launcher_(hw, app, motor_fric_front_left, motor_fric_front_right,
                   motor_fric_back_left, motor_fric_back_right, motor_trig,
                   task_stack_depth, pid_trig_angle, pid_trig_speed,
@@ -149,7 +152,7 @@ class Launcher : public LibXR::Application {
 #endif
 
     thread_.Create(this, ThreadFunc, "LauncherThread", task_stack_depth,
-                   LibXR::Thread::Priority::HIGH);
+                   thread_priority);
 
     auto lost_ctrl_callback = LibXR::Callback<uint32_t>::Create(
         [](bool in_isr, Launcher* self, uint32_t event_id) {
