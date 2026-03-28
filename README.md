@@ -78,14 +78,16 @@ constructor_args:
       out_limit: 1.0
       cycle: false
   - launcher_param:
-      fric1_setpoint_speed: 4950.0
-      fric2_setpoint_speed: 3820.0
+      fric_setpoint_speed: [4950.0, 3820.0]
+      fric_num: 2
       trig_gear_ratio: 19.2032
       num_trig_tooth: 6
       trig_freq_: 0.0
   - cmd: '@&cmd'
 template_args:
   - LauncherType: HeroLauncher
+
+InfantryLauncher 可通过 `launcher_param.fric_num` 指定使用的摩擦轮数量，`fric_setpoint_speed` 取前 N 项，未使用的摩擦轮 PID 将被跳过。
 
 ## 5. 依赖与硬件
 Required Hardware:

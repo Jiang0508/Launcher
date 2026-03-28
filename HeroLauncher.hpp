@@ -102,6 +102,7 @@ depends:
  */
 class HeroLauncher {
  public:
+  static constexpr int FRIC_NUM = 4;
   static constexpr float TRIG_ZERO_ANGLE_OFFSET = 0.90f;
   static constexpr float TRIG_LOADING_ANGLE_STEP =
       static_cast<float>(M_2PI) / 1000.0f;
@@ -142,6 +143,7 @@ class HeroLauncher {
     uint8_t num_trig_tooth;
     /*弹频*/
     float trig_freq;
+    uint8_t fric_num;
   };
 
   /**

@@ -2,72 +2,55 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: No description provided
+module_name: Launcher
+module_description: Template launcher module supporting InfantryLauncher and HeroLauncher types
 constructor_args:
-  - motor_fric_front_left: '@&motor_fric_front_left'
-  - motor_fric_front_right: '@&motor_fric_front_right'
-  - motor_fric_back_left: '@&motor_fric_back_left'
-  - motor_fric_back_right: '@&motor_fric_back_right'
-  - motor_trig: '@&motor_trig'
-  - task_stack_depth: 4096
-  - pid_trig_angle:
-      k: 1.0
-      p: 4000.0
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 4000.0
-      cycle: false
-  - pid_trig_speed:
-      k: 1.0
-      p: 0.0012
-      i: 0.0005
-      d: 0.0
-      i_limit: 1.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_0:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_1:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_2:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_3:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
+  - task_stack_depth: 1536
   - launcher_param:
-      fric1_setpoint_speed: 4950.0
-      fric2_setpoint_speed: 3820.0
-      trig_gear_ratio: 19.2032
-      num_trig_tooth: 6
-      trig_freq_: 0.0
+      fric_setpoint_speed: [6500.0, 0.0]
+      trig_gear_ratio: 36.0
+      num_trig_tooth: 10
+      expect_trig_freq_: 16.0
+      pid_trig_angle_:
+        k: 1.0
+        p: 40.0
+        i: 0.1
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.0
+        cycle: false
+      pid_trig_speed_:
+        k: 1.0
+        p: 0.15
+        i: 0.0
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.0
+        cycle: false
+      pid_fric_0:
+        k: 0.8
+        p: 0.0003
+        i: 0.0
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.6
+        cycle: false
+      pid_fric_1:
+        k: 0.8
+        p: 0.0003
+        i: 0.0
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 0.6
+        cycle: false
+      trig_motor_: '@&motor_trig'
+      fric_motor_:
+        - '@&motor_fric_0'
+        - '@&motor_fric_1'
   - cmd: '@&cmd'
   - thread_priority: LibXR::Thread::Priority::HIGH
 template_args:
-  - LauncherType: HeroLauncher
+  - LauncherType: InfantryLauncher
 required_hardware:
   - dr16
   - can
@@ -77,7 +60,9 @@ depends:
 === END MANIFEST === */
 // clang-format on
 
+#include <array>
 #include <cstdint>
+#include <type_traits>
 
 #include "CMD.hpp"
 #include "HeroLauncher.hpp"
@@ -103,39 +88,14 @@ template <class LauncherType>
 class Launcher : public LibXR::Application {
  public:
   using LauncherEvent = typename LauncherType::LauncherEvent;
-
-  struct LauncherParam {
-    float fric1_setpoint_speed;
-    float fric2_setpoint_speed;
-    float trig_gear_ratio;
-    uint8_t num_trig_tooth;
-    float trig_freq_;
-  };
+  static constexpr int FRIC_NUM = LauncherType::FRIC_NUM;
+  using LauncherParam = typename LauncherType::LauncherParam;
 
   Launcher(
       LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-      RMMotor* motor_fric_front_left, RMMotor* motor_fric_front_right,
-      RMMotor* motor_fric_back_left, RMMotor* motor_fric_back_right,
-      RMMotor* motor_trig, uint32_t task_stack_depth,
-      LibXR::PID<float>::Param pid_trig_angle,
-      LibXR::PID<float>::Param pid_trig_speed,
-      LibXR::PID<float>::Param pid_fric_speed_0,
-      LibXR::PID<float>::Param pid_fric_speed_1,
-      LibXR::PID<float>::Param pid_fric_speed_2,
-      LibXR::PID<float>::Param pid_fric_speed_3, LauncherParam launcher_param,
-      CMD* cmd,
+      uint32_t task_stack_depth, LauncherParam launcher_param, CMD* cmd,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::HIGH)
-      : launcher_(hw, app, motor_fric_front_left, motor_fric_front_right,
-                  motor_fric_back_left, motor_fric_back_right, motor_trig,
-                  task_stack_depth, pid_trig_angle, pid_trig_speed,
-                  pid_fric_speed_0, pid_fric_speed_1, pid_fric_speed_2,
-                  pid_fric_speed_3,
-                  typename LauncherType::LauncherParam{
-                      launcher_param.fric1_setpoint_speed,
-                      launcher_param.fric2_setpoint_speed,
-                      launcher_param.trig_gear_ratio,
-                      launcher_param.num_trig_tooth, launcher_param.trig_freq_},
-                  cmd)
+      : launcher_(hw, app, task_stack_depth, launcher_param, cmd)
 #ifdef DEBUG
         ,
         cmd_file_(LibXR::RamFS::CreateFile(
@@ -199,7 +159,7 @@ class Launcher : public LibXR::Application {
 
   LibXR::Event& GetEvent() { return launcher_event_; }
 
-  void OnMonitor() override { launcher_.OnMonitor(); }
+ void OnMonitor() override { launcher_.OnMonitor(); }
 
  private:
   LauncherType launcher_;
@@ -232,7 +192,8 @@ class Launcher : public LibXR::Application {
         cmd_sub.StartWaiting();
       }
       if(launcher_ref.Available()) {
-        self->launcher_.ref_data_ = launcher_ref.GetData();
+        self->launcher_.ref_data_.heat_cooling = launcher_ref.GetData().rs.shooter_cooling_value;
+        self->launcher_.ref_data_.heat_limit= launcher_ref.GetData().rs.shooter_heat_limit;
         launcher_ref.StartWaiting();
       }
       self->mutex_.Lock();
