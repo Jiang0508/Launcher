@@ -68,6 +68,7 @@ depends:
 #include "HeroLauncher.hpp"
 #include "InfantryLauncher.hpp"
 #include "RMMotor.hpp"
+#include "Referee.hpp"
 #include "app_framework.hpp"
 #include "event.hpp"
 #include "libxr_cb.hpp"
@@ -78,7 +79,6 @@ depends:
 #include "pid.hpp"
 #include "thread.hpp"
 #include "timebase.hpp"
-#include "Referee.hpp"
 #ifdef DEBUG
 #include "DebugCore.hpp"
 #include "ramfs.hpp"
@@ -159,7 +159,7 @@ class Launcher : public LibXR::Application {
 
   LibXR::Event& GetEvent() { return launcher_event_; }
 
- void OnMonitor() override { launcher_.OnMonitor(); }
+  void OnMonitor() override { launcher_.OnMonitor(); }
 
  private:
   LauncherType launcher_;
@@ -191,9 +191,11 @@ class Launcher : public LibXR::Application {
         self->launcher_.launcher_cmd_ = cmd_sub.GetData();
         cmd_sub.StartWaiting();
       }
-      if(launcher_ref.Available()) {
-        self->launcher_.ref_data_.heat_cooling = launcher_ref.GetData().rs.shooter_cooling_value;
-        self->launcher_.ref_data_.heat_limit= launcher_ref.GetData().rs.shooter_heat_limit;
+      if (launcher_ref.Available()) {
+        self->launcher_.ref_data_.rs.shooter_cooling_value =
+            launcher_ref.GetData().rs.shooter_cooling_value;
+        self->launcher_.ref_data_.rs.shooter_heat_limit =
+            launcher_ref.GetData().rs.shooter_heat_limit;
         launcher_ref.StartWaiting();
       }
       self->mutex_.Lock();

@@ -2,68 +2,66 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: No description provided
+module_description: 英雄发射机构实现
 constructor_args:
-  - motor_fric_front_left: '@&motor_fric_front_left'
-  - motor_fric_front_right: '@&motor_fric_front_right'
-  - motor_fric_back_left: '@&motor_fric_back_left'
-  - motor_fric_back_right: '@&motor_fric_back_right'
-  - motor_trig: '@&motor_trig'
-  - task_stack_depth: 4096
-  - pid_trig_angle:
-      k: 1.0
-      p: 4000.0
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 4000.0
-      cycle: false
-  - pid_trig_speed:
-      k: 1.0
-      p: 0.0012
-      i: 0.0005
-      d: 0.0
-      i_limit: 1.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_0:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_1:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_2:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
-  - pid_fric_speed_3:
-      k: 1.0
-      p: 0.002
-      i: 0.0
-      d: 0.0
-      i_limit: 0.0
-      out_limit: 1.0
-      cycle: false
+  - task_stack_depth: 2048
   - launcher_param:
-      fric1_setpoint_speed: 4950.0
-      fric2_setpoint_speed: 3820.0
-      trig_gear_ratio: 19.2032
-      num_trig_tooth: 6
-      trig_freq_: 0.0
+      fric_setpoint_speed_:
+        - 4200.0
+        - 1700.0
+      pid_trig_angle_:
+        k: 1.0
+        p: 4000.0
+        i: 0.0
+        d: 0.0
+        i_limit: 0.0
+        out_limit: 4000.0
+        cycle: false
+      pid_trig_speed_:
+        k: 1.0
+        p: 0.0012
+        i: 0.0005
+        d: 0.0
+        i_limit: 1.0
+        out_limit: 1.0
+        cycle: false
+      pid_fric_speed_:
+        - k: 1.0
+          p: 0.0005
+          i: 0.0
+          d: 0.0
+          i_limit: 0.0
+          out_limit: 1.0
+          cycle: false
+        - k: 1.0
+          p: 0.0005
+          i: 0.0
+          d: 0.0
+          i_limit: 0.0
+          out_limit: 1.0
+          cycle: false
+        - k: 1.0
+          p: 0.0005
+          i: 0.0
+          d: 0.0
+          i_limit: 0.0
+          out_limit: 1.0
+          cycle: false
+        - k: 1.0
+          p: 0.0005
+          i: 0.0
+          d: 0.0
+          i_limit: 0.0
+          out_limit: 1.0
+          cycle: false
+      trig_gear_ratio_: 19.2032
+      num_trig_tooth_: 6
+      fric_motor_:
+        - '@&motor_fric_front_left'
+        - '@&motor_fric_front_right'
+        - '@&motor_fric_back_left'
+        - '@&motor_fric_back_right'
+      motor_trig_: '@&motor_trig'
   - cmd: '@&cmd'
 template_args:
   - LauncherType: HeroLauncher
@@ -103,7 +101,7 @@ depends:
 class HeroLauncher {
  public:
   static constexpr int FRIC_NUM = 4;
-  static constexpr float TRIG_ZERO_ANGLE_OFFSET = 0.90f;
+  static constexpr float TRIG_ZERO_ANGLE_OFFSET = 0.5f;
   static constexpr float TRIG_LOADING_ANGLE_STEP =
       static_cast<float>(M_2PI) / 1000.0f;
 
@@ -132,61 +130,67 @@ class HeroLauncher {
     uint32_t available_shot; /* 热量范围内还可以发射的数量 */
   };
 
+  struct FricSetPointSpeedPair : std::array<float, FRIC_NUM / 2> {
+    FricSetPointSpeedPair(std::initializer_list<float> list) {
+      std::copy_n(list.begin(), FRIC_NUM / 2, this->begin());
+    }
+  };
+
+  struct PidFricSpeed : std::array<LibXR::PID<float>::Param, FRIC_NUM> {
+    PidFricSpeed(std::initializer_list<LibXR::PID<float>::Param> list) {
+      std::copy_n(list.begin(), FRIC_NUM, this->begin());
+    }
+  };
+
+  struct FricMotor : std::array<RMMotor*, FRIC_NUM> {
+    FricMotor(std::initializer_list<RMMotor*> list) {
+      std::copy_n(list.begin(), FRIC_NUM, this->begin());
+    }
+  };
+
   struct LauncherParam {
-    /*一级摩擦轮转速*/
-    float fric1_setpoint_speed;
-    /*二级摩擦轮转速*/
-    float fric2_setpoint_speed;
-    /*拨弹盘电机减速比*/
-    float trig_gear_ratio;
-    /*拨齿数目*/
-    uint8_t num_trig_tooth;
-    /*弹频*/
-    float trig_freq;
-    uint8_t fric_num;
+    const FricSetPointSpeedPair fric_setpoint_speed_;
+    LibXR::PID<float>::Param pid_trig_angle_;
+
+    LibXR::PID<float>::Param pid_trig_speed_;
+    PidFricSpeed pid_fric_speed_;
+
+    FricMotor fric_motor_;
+    RMMotor* motor_trig_;
+
+    const float trig_gear_ratio_;
+    const uint8_t num_trig_tooth_;
   };
 
   /**
    * @brief 构造 HeroLauncher
    * @param hw 硬件容器
    * @param app 应用管理器
-   * @param motor_fric_front_left 前左摩擦轮电机
-   * @param motor_fric_front_right 前右摩擦轮电机
-   * @param motor_fric_back_left 后左摩擦轮电机
-   * @param motor_fric_back_right 后右摩擦轮电机
-   * @param motor_trig 拨弹电机
    * @param task_stack_depth 线程栈深（由外壳使用）
-   * @param trig_angle_pid 拨弹角度环参数
-   * @param trig_speed_pid 拨弹速度环参数
-   * @param fric_speed_pid_0~3 摩擦轮速度环参数
    * @param launcher_param 发射器参数
    * @param cmd CMD 模块指针
    */
-  HeroLauncher(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-               RMMotor* motor_fric_front_left, RMMotor* motor_fric_front_right,
-               RMMotor* motor_fric_back_left, RMMotor* motor_fric_back_right,
-               RMMotor* motor_trig, uint32_t task_stack_depth,
-               LibXR::PID<float>::Param trig_angle_pid,
-               LibXR::PID<float>::Param trig_speed_pid,
-               LibXR::PID<float>::Param fric_speed_pid_0,
-               LibXR::PID<float>::Param fric_speed_pid_1,
-               LibXR::PID<float>::Param fric_speed_pid_2,
-               LibXR::PID<float>::Param fric_speed_pid_3,
-               LauncherParam launcher_param, CMD* cmd)
-      : param_(launcher_param),
-        motor_fric_front_left_(motor_fric_front_left),
-        motor_fric_front_right_(motor_fric_front_right),
-        motor_fric_back_left_(motor_fric_back_left),
-        motor_fric_back_right_(motor_fric_back_right),
-        motor_trig_(motor_trig),
-        trig_angle_pid_(trig_angle_pid),
-        trig_speed_pid_(trig_speed_pid),
-        fric_speed_pid_{fric_speed_pid_0, fric_speed_pid_1, fric_speed_pid_2,
-                        fric_speed_pid_3} {
-    UNUSED(hw);
-    UNUSED(app);
-    UNUSED(task_stack_depth);
-    UNUSED(cmd);
+  HeroLauncher(
+      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
+      uint32_t task_stack_depth, LauncherParam launcher_param, CMD* cmd,
+      LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::HIGH)
+      : trig_angle_pid_(launcher_param.pid_trig_angle_),
+        trig_speed_pid_(launcher_param.pid_trig_speed_),
+        fric_speed_pid_(
+            {{LibXR::PID<float>(launcher_param.pid_fric_speed_[0]),
+              LibXR::PID<float>(launcher_param.pid_fric_speed_[1]),
+              LibXR::PID<float>(launcher_param.pid_fric_speed_[2]),
+              LibXR::PID<float>(launcher_param.pid_fric_speed_[3])}}),
+        trig_gear_ratio_(launcher_param.trig_gear_ratio_),
+        num_trig_tooth_(launcher_param.num_trig_tooth_) {
+    motor_trig_ = launcher_param.motor_trig_;
+
+    for (int i = 0; i < FRIC_NUM; i++) {
+      fric_motor_[i] = launcher_param.fric_motor_[i];
+    }
+    for (int i = 0; i < FRIC_NUM / 2; i++) {
+      param_fric_target_speed_[i] = launcher_param.fric_setpoint_speed_[i];
+    }
 
     last_wakeup_ = LibXR::Timebase::GetMicroseconds();
   }
@@ -199,21 +203,15 @@ class HeroLauncher {
 
     const float LAST_TRIG_MOTOR_ANGLE =
         LibXR::CycleValue<float>(param_trig_.abs_angle);
-
-    motor_fric_front_left_->Update();
-    motor_fric_front_right_->Update();
-    motor_fric_back_left_->Update();
-    motor_fric_back_right_->Update();
+    for (int i = 0; i < FRIC_NUM; i++) {
+      fric_motor_[i]->Update();
+      param_motor_fric_[i] = fric_motor_[i]->GetFeedback();
+    }
     motor_state_ = motor_trig_->Update();
-
-    param_motor_fric_front_left_ = motor_fric_front_left_->GetFeedback();
-    param_motor_fric_front_right_ = motor_fric_front_right_->GetFeedback();
-    param_motor_fric_back_left_ = motor_fric_back_left_->GetFeedback();
-    param_motor_fric_back_right_ = motor_fric_back_right_->GetFeedback();
     param_trig_ = motor_trig_->GetFeedback();
     const float DELTA_MOTOR_ANGLE =
         LibXR::CycleValue<float>(param_trig_.abs_angle) - LAST_TRIG_MOTOR_ANGLE;
-    this->trig_angle_ += DELTA_MOTOR_ANGLE / param_.trig_gear_ratio;
+    this->trig_angle_ += DELTA_MOTOR_ANGLE / trig_gear_ratio_;
   }
 
   /**
@@ -289,10 +287,10 @@ class HeroLauncher {
     trig_output_ = 0.0f;
 
     // 重置速度目标值
-    fric_target_speed_[0] = 0.0f;
-    fric_target_speed_[1] = 0.0f;
-    fric_target_speed_[2] = 0.0f;
-    fric_target_speed_[3] = 0.0f;
+    fric_target_rpm_[0] = 0.0f;
+    fric_target_rpm_[1] = 0.0f;
+    fric_target_rpm_[2] = 0.0f;
+    fric_target_rpm_[3] = 0.0f;
 
     // 重置发射命令
     launcher_cmd_.isfire = false;
@@ -347,8 +345,6 @@ class HeroLauncher {
   Referee::LauncherPack ref_data_{};
 
  private:
-  LauncherParam param_;
-
   TrigMode trig_mode_ = TrigMode::SAFE;
 
   HeatControl heat_ctrl_;
@@ -367,10 +363,8 @@ class HeroLauncher {
 
   LibXR::MillisecondTimestamp start_loading_time_ = 0;
 
-  RMMotor* motor_fric_front_left_;
-  RMMotor* motor_fric_front_right_;
-  RMMotor* motor_fric_back_left_;
-  RMMotor* motor_fric_back_right_;
+  RMMotor* fric_motor_[FRIC_NUM];
+
   RMMotor* motor_trig_;
 
   LibXR::ErrorCode motor_state_;
@@ -382,16 +376,15 @@ class HeroLauncher {
   float trig_angle_ = 0.0f;
   float trig_output_ = 0.0f;
 
-  float fric_target_speed_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  float param_fric_target_speed_[2] = {0.0f, 0.0f};
+  float fric_target_rpm_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
   LibXR::PID<float> trig_angle_pid_;
   LibXR::PID<float> trig_speed_pid_;
 
-  LibXR::PID<float> fric_speed_pid_[4] = {
-      LibXR::PID<float>(LibXR::PID<float>::Param()),
-      LibXR::PID<float>(LibXR::PID<float>::Param()),
-      LibXR::PID<float>(LibXR::PID<float>::Param()),
-      LibXR::PID<float>(LibXR::PID<float>::Param())};
+  std::array<LibXR::PID<float>, FRIC_NUM> fric_speed_pid_;
+  const float trig_gear_ratio_;
+  const uint8_t num_trig_tooth_;
 
   float current_back_left_ = 0.0f;
 
@@ -412,33 +405,27 @@ class HeroLauncher {
 
   LauncherEvent launcher_event_ = LauncherEvent::SET_FRICMODE_RELAX;
 
-  Motor::Feedback param_motor_fric_front_left_;
-  Motor::Feedback param_motor_fric_front_right_;
-  Motor::Feedback param_motor_fric_back_left_;
-  Motor::Feedback param_motor_fric_back_right_;
+  Motor::Feedback param_motor_fric_[FRIC_NUM];
+
   Motor::Feedback param_trig_;
 
-  Motor::MotorCmd cmd_fric_front_left_ =
+  Motor::MotorCmd cmd_fric_[FRIC_NUM] = {  // 添加摩擦轮命令数组
       Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
                       .reduction_ratio = 1.0f,
-                      .velocity = 0};
-  Motor::MotorCmd cmd_fric_front_right_ =
+                      .velocity = 0},
       Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
                       .reduction_ratio = 1.0f,
-                      .velocity = 0};
-  Motor::MotorCmd cmd_fric_back_left_ =
+                      .velocity = 0},
       Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
                       .reduction_ratio = 1.0f,
-                      .velocity = 0};
-  Motor::MotorCmd cmd_fric_back_right_ =
+                      .velocity = 0},
       Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
                       .reduction_ratio = 1.0f,
-                      .velocity = 0};
+                      .velocity = 0}};
   Motor::MotorCmd cmd_trig_ =
       Motor::MotorCmd{.mode = Motor::ControlMode::MODE_CURRENT,
                       .reduction_ratio = 19.2032f,
                       .velocity = 0};
-
   /*----------工具函数--------------------------------*/
 
   /**
@@ -477,18 +464,18 @@ class HeroLauncher {
     switch (launcher_event_) {
       case LauncherEvent::SET_FRICMODE_RELAX:
       case LauncherEvent::SET_FRICMODE_SAFE:
-        fric_target_speed_[0] = 0;
-        fric_target_speed_[1] = 0;
-        fric_target_speed_[2] = 0;
-        fric_target_speed_[3] = 0;
+        fric_target_rpm_[0] = 0.0f;
+        fric_target_rpm_[1] = 0.0f;
+        fric_target_rpm_[2] = 0.0f;
+        fric_target_rpm_[3] = 0.0f;
         soft_start_finish_ = false;
         Reset();
         break;
       case LauncherEvent::SET_FRICMODE_READY:
-        fric_target_speed_[0] = param_.fric2_setpoint_speed;
-        fric_target_speed_[1] = param_.fric2_setpoint_speed;
-        fric_target_speed_[2] = param_.fric1_setpoint_speed;
-        fric_target_speed_[3] = param_.fric1_setpoint_speed;
+        fric_target_rpm_[0] = param_fric_target_speed_[0];
+        fric_target_rpm_[1] = param_fric_target_speed_[0];
+        fric_target_rpm_[2] = param_fric_target_speed_[1];
+        fric_target_rpm_[3] = param_fric_target_speed_[1];
         break;
       default:
         break;
@@ -514,8 +501,8 @@ class HeroLauncher {
     }
 
     if (soft_start_finish_) {
-      if (std::abs(param_motor_fric_back_left_.torque) > 0.04) {  // 发弹检测
-        trig_zero_angle_ = trig_angle_;  // 获取电机当前位置
+      if (std::abs(param_motor_fric_[2].torque) > 0.04) {  // 发弹检测
+        trig_zero_angle_ = trig_angle_;                    // 获取电机当前位置
         trig_setpoint_angle_ = trig_angle_ - TRIG_ZERO_ANGLE_OFFSET;  // 偏移量
 
         fire_flag_ = false;
@@ -534,8 +521,8 @@ class HeroLauncher {
     if (trig_mode_ == TrigMode::SINGLE) {
       if (!enable_fire_ && mark_launch_) {
         if (heat_ctrl_.available_shot) {
-          trig_setpoint_angle_ -= static_cast<float>(M_2PI) /
-                                  static_cast<float>(param_.num_trig_tooth);
+          trig_setpoint_angle_ -=
+              static_cast<float>(M_2PI) / static_cast<float>(num_trig_tooth_);
 
           enable_fire_ = true;
           mark_launch_ = false;
@@ -557,7 +544,7 @@ class HeroLauncher {
     }
 
     if (!mark_launch_) {  // 发弹状态检测
-      if (std::abs(param_motor_fric_back_left_.torque) > 0.04) {
+      if (std::abs(param_motor_fric_[2].torque) > 0.04) {
         fire_flag_ = false;
 
         fired_++;
@@ -573,19 +560,11 @@ class HeroLauncher {
    * @brief 摩擦轮PID控制输出
    */
   void FricPidControl() {
-    cmd_fric_front_left_.velocity = fric_speed_pid_[0].Calculate(
-        fric_target_speed_[0], param_motor_fric_front_left_.velocity, dt_);
-    cmd_fric_front_right_.velocity = fric_speed_pid_[1].Calculate(
-        fric_target_speed_[1], param_motor_fric_front_right_.velocity, dt_);
-    cmd_fric_back_left_.velocity = fric_speed_pid_[2].Calculate(
-        fric_target_speed_[2], param_motor_fric_back_left_.velocity, dt_);
-    cmd_fric_back_right_.velocity = fric_speed_pid_[3].Calculate(
-        fric_target_speed_[3], param_motor_fric_back_right_.velocity, dt_);
-
-    motor_fric_front_left_->Control(cmd_fric_front_left_);
-    motor_fric_front_right_->Control(cmd_fric_front_right_);
-    motor_fric_back_left_->Control(cmd_fric_back_left_);
-    motor_fric_back_right_->Control(cmd_fric_back_right_);
+    for (int i = 0; i < FRIC_NUM; i++) {
+      cmd_fric_[i].velocity = fric_speed_pid_[i].Calculate(
+          fric_target_rpm_[i], param_motor_fric_[i].velocity, dt_);
+      fric_motor_[i]->Control(cmd_fric_[i]);
+    }
   }
 
   /**
@@ -620,11 +599,11 @@ class HeroLauncher {
   void SoftStart() {
     if (!soft_start_finish_) {
       for (LibXR::PID<float>& i : fric_speed_pid_) {
-        i.SetOutLimit(0.05f);
+        i.SetOutLimit(0.06f);
       }
 
-      if (motor_fric_back_left_->GetFeedback().velocity >
-          param_.fric1_setpoint_speed) {
+      if (fric_motor_[0]->GetFeedback().velocity >
+          param_fric_target_speed_[0]) {
         soft_start_finish_ = true;
       }
     } else {
